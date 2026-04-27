@@ -12,9 +12,8 @@ perceive → ideate → act
 
 1. **perceive** (`director/perceive.py`) — collects a typed `Snapshot` from:
    - GitHub: open PRs (CI status, review state, approvals, age, labels, head SHA),
-     open issues (labels, age), and default-branch HEAD age across
-     `motto-social-agent`, `motto-sdr-agent`, `motto-appraisal-pipeline`,
-     `motto-appraisal-cockpit`.
+     open issues (labels, age), and default-branch HEAD age across the watch
+     list (see `DEFAULT_WATCH_REPOS`; override with `WATCH_REPOS`).
    - Northflank: last-run status of the `pipeline-auto-nudge` job.
 2. **ideate** (`director/ideate.py`) — sends the snapshot to Claude Opus with a
    labor-utilization-director system prompt and parses a ranked list of
@@ -27,6 +26,10 @@ perceive → ideate → act
      `prompt_for_claude_code`
    - `merge_pr` → GitHub REST `PUT /repos/{repo}/pulls/{n}/merge`, only if
      CI is green, approvals ≥ 1, and the PR carries the `auto-merge-ok` label
+   - `compound_pr` → append a commit (the move's `code_changes`) to one
+     long-lived rolling PR per repo (`director/auto/compound`); the PR body
+     is a checklist of every appended move with timestamps + rationales.
+     Optional native GH auto-merge — see `DIRECTOR_AUTO_MERGE` below.
    - `nudge_pipeline` → `POST` to the appraisal-pipeline `/tick` endpoint
    - `noop` → skipped
 
@@ -54,6 +57,11 @@ Director-specific overrides (optional):
 | Variable | Purpose |
 | --- | --- |
 | `LLM_PROVIDER` | Primary provider for ideate: `anthropic` (default), `groq`, `openrouter`. Chain falls through to the others if the primary's API key is missing or the call errors. |
+| `WATCH_REPOS` | Comma-separated repo slugs to perceive (e.g. `lkmotto/motto-social-agent,lkmotto/motto-sdr-agent`). Empty/unset uses `DEFAULT_WATCH_REPOS`. Set this on the Northflank job to override the default watch list. |
+| `DIRECTOR_COMPOUND_BRANCH` | Long-lived branch name for the rolling compound PR per repo. Default `director/auto/compound`. |
+| `DIRECTOR_COMPOUND_MAX_MOVES` | Force-flush (enable auto-merge) when the compound PR reaches this many moves. Default `10`. |
+| `DIRECTOR_AUTO_MERGE` | When `true` and not in dry-run, enable native GitHub auto-merge (squash) on the compound PR after each append. CI green → GitHub merges automatically; next tick opens a fresh compound. |
+| `DIRECTOR_ALLOW_SELF_MOD` | Required (`true`) for a `compound_pr` move to touch motto-director's own paths (`director/`, `tests/`, `.github/`, `Dockerfile`, `pyproject.toml`, `scripts/`). Off by default. |
 | `DIRECTOR_DRY_RUN` | Set `1` to log moves without executing them |
 | `NORTHFLANK_PROJECT` | Northflank project slug (default `motto`) |
 | `PIPELINE_AUTO_NUDGE_JOB` | Job name (default `pipeline-auto-nudge`) |

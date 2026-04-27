@@ -1,12 +1,32 @@
-"""Act: execute top-N moves (file_issue, spawn_session, merge_pr, nudge_pipeline)."""
+"""Act: execute top-N moves (file_issue, spawn_session, merge_pr,
+nudge_pipeline, compound_pr)."""
 
 from __future__ import annotations
 
+import json
 import os
+import sys
+import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import httpx
 
+from director.compound import (
+    CodeChange,
+    CompoundEntry,
+    allow_self_mod,
+    append_commit,
+    auto_merge_enabled_env,
+    compound_branch_name,
+    compound_max_moves,
+    enable_auto_merge,
+    ensure_branch,
+    ensure_pr,
+    is_self_mod,
+    parse_pr_entries,
+    update_pr_body,
+)
 from director.ideate import NextMove
 from director.perceive import PullRequest, Snapshot, northflank_api_key
 
@@ -125,6 +145,98 @@ def _merge_pr(
     return ActResult(move=move, status="executed", detail=f"merged #{pr.number}")
 
 
+def _log(event: str, **fields: object) -> None:
+    record = {
+        "ts": datetime.now(UTC).isoformat(),
+        "event": event,
+        **fields,
+    }
+    print(json.dumps(record, default=str), file=sys.stdout, flush=True)
+
+
+def _compound_pr(
+    client: httpx.Client, move: NextMove, *, run_id: str
+) -> ActResult:
+    if not move.code_changes:
+        return ActResult(move=move, status="skipped", detail="no code_changes")
+
+    paths = [c["path"] for c in move.code_changes]
+    if is_self_mod(move.repo, paths) and not allow_self_mod():
+        return ActResult(
+            move=move,
+            status="skipped",
+            detail="self-modifying path; set DIRECTOR_ALLOW_SELF_MOD=true to enable",
+        )
+
+    branch = compound_branch_name()
+    ensure_branch(client, move.repo, branch)
+    pr = ensure_pr(client, move.repo, branch)
+    pr_number = pr["number"]
+    pr_node_id = pr["node_id"]
+
+    entries = parse_pr_entries(pr.get("body"))
+    commit_message = json.dumps(
+        {
+            "director_run_id": run_id,
+            "move_kind": move.kind,
+            "rationale": move.rationale,
+        }
+    )
+    changes = [CodeChange(path=c["path"], content=c["content"]) for c in move.code_changes]
+    commit_sha = append_commit(client, move.repo, branch, changes, commit_message)
+
+    entries.append(
+        CompoundEntry(
+            ts=datetime.now(UTC).isoformat(),
+            move_kind=move.kind,
+            title=move.title,
+            rationale=move.rationale,
+            commit_sha=commit_sha,
+        )
+    )
+    update_pr_body(client, move.repo, pr_number, entries)
+    _log(
+        "director.compound_appended",
+        repo=move.repo,
+        pr_number=pr_number,
+        moves_in_pr=len(entries),
+    )
+
+    max_moves = compound_max_moves()
+    flush_reason: str | None = None
+    if len(entries) >= max_moves:
+        flush_reason = f"max_moves_reached({max_moves})"
+    elif auto_merge_enabled_env():
+        flush_reason = "auto_merge_env"
+
+    if flush_reason is not None:
+        try:
+            enable_auto_merge(client, pr_node_id)
+            _log(
+                "director.auto_merge_enabled",
+                repo=move.repo,
+                pr_number=pr_number,
+            )
+            _log(
+                "director.compound_flushed",
+                repo=move.repo,
+                pr_number=pr_number,
+                reason=flush_reason,
+            )
+        except httpx.HTTPError as exc:
+            return ActResult(
+                move=move,
+                status="executed",
+                detail=f"appended #{pr_number}; auto-merge failed: {exc}",
+            )
+
+    return ActResult(
+        move=move,
+        status="executed",
+        detail=f"appended to #{pr_number} ({len(entries)} moves)",
+    )
+
+
 def _nudge_pipeline(client: httpx.Client, move: NextMove) -> ActResult:
     headers: dict[str, str] = {}
     nf_key = northflank_api_key()
@@ -146,6 +258,7 @@ def act(
     snapshot: Snapshot,
     *,
     top_n: int = 5,
+    run_id: str | None = None,
 ) -> list[ActResult]:
     """Execute the top-N moves. Honors DIRECTOR_DRY_RUN=1."""
     selected = moves[:top_n]
@@ -155,6 +268,7 @@ def act(
             for m in selected
         ]
 
+    run_id = run_id or uuid.uuid4().hex[:12]
     results: list[ActResult] = []
     with httpx.Client(timeout=30.0) as client:
         for move in selected:
@@ -170,6 +284,8 @@ def act(
                     results.append(_merge_pr(client, move, snapshot))
                 elif move.kind == "nudge_pipeline":
                     results.append(_nudge_pipeline(client, move))
+                elif move.kind == "compound_pr":
+                    results.append(_compound_pr(client, move, run_id=run_id))
             except httpx.HTTPError as exc:
                 results.append(
                     ActResult(move=move, status="error", detail=str(exc))

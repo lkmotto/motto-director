@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Literal
 
 import httpx
@@ -14,8 +14,17 @@ from anthropic import Anthropic
 from director.perceive import Snapshot
 
 MoveKind = Literal[
-    "spawn_session", "file_issue", "merge_pr", "nudge_pipeline", "noop"
+    "spawn_session",
+    "file_issue",
+    "merge_pr",
+    "nudge_pipeline",
+    "compound_pr",
+    "noop",
 ]
+
+_VALID_KINDS: frozenset[str] = frozenset(
+    ("spawn_session", "file_issue", "merge_pr", "nudge_pipeline", "compound_pr", "noop")
+)
 
 ANTHROPIC_MODEL = os.environ.get("DIRECTOR_MODEL", "claude-opus-4-7")
 GROQ_MODEL = os.environ.get("DIRECTOR_GROQ_MODEL", "llama-3.3-70b-versatile")
@@ -41,11 +50,15 @@ Hard rules:
 1. Every move MUST include explicit `intent` (1-2 sentences explaining WHY now,
    referencing concrete signals from the snapshot — PR numbers, ages, statuses).
    Moves without intent are dropped.
-2. `kind` is one of: spawn_session, file_issue, merge_pr, nudge_pipeline, noop.
+2. `kind` is one of: spawn_session, file_issue, merge_pr, nudge_pipeline,
+   compound_pr, noop.
 3. `priority` is an integer 1-5 (1 = highest).
 4. `prompt_for_claude_code` is required for spawn_session moves; it must be a
    self-contained brief a fresh Claude Code session can act on.
-5. Output STRICT JSON: {"moves": [NextMove, ...]} with no prose.
+5. For `compound_pr` moves, populate `code_changes` as a list of
+   {path, content} objects with the full new file content. The director
+   appends these as a single commit to a long-lived rolling PR per repo.
+6. Output STRICT JSON: {"moves": [NextMove, ...]} with no prose.
 """
 
 
@@ -58,6 +71,7 @@ class NextMove:
     prompt_for_claude_code: str
     priority: int
     intent: str
+    code_changes: list[dict[str, str]] = field(default_factory=list)
 
 
 def _snapshot_to_prompt(snapshot: Snapshot) -> str:
@@ -69,13 +83,21 @@ def _coerce_move(raw: dict) -> NextMove | None:
     if not intent:
         return None  # hard requirement: drop moves without intent
     kind = raw.get("kind")
-    if kind not in {"spawn_session", "file_issue", "merge_pr", "nudge_pipeline", "noop"}:
+    if kind not in _VALID_KINDS:
         return None
     try:
         priority = int(raw.get("priority", 5))
     except (TypeError, ValueError):
         priority = 5
     priority = max(1, min(5, priority))
+    code_changes: list[dict[str, str]] = []
+    raw_changes = raw.get("code_changes") or []
+    if isinstance(raw_changes, list):
+        for c in raw_changes:
+            if isinstance(c, dict) and "path" in c and "content" in c:
+                code_changes.append(
+                    {"path": str(c["path"]), "content": str(c["content"])}
+                )
     return NextMove(
         repo=str(raw.get("repo", "")),
         kind=kind,  # type: ignore[arg-type]
@@ -84,6 +106,7 @@ def _coerce_move(raw: dict) -> NextMove | None:
         prompt_for_claude_code=str(raw.get("prompt_for_claude_code", "")).strip(),
         priority=priority,
         intent=intent,
+        code_changes=code_changes,
     )
 
 

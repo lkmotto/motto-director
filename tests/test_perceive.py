@@ -8,7 +8,21 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import respx
 
-from director.perceive import perceive
+from director.perceive import DEFAULT_WATCH_REPOS, parse_watch_repos, perceive
+
+
+def test_parse_watch_repos_returns_default_when_unset_or_empty():
+    assert parse_watch_repos(None) == DEFAULT_WATCH_REPOS
+    assert parse_watch_repos("") == DEFAULT_WATCH_REPOS
+    assert parse_watch_repos("   ") == DEFAULT_WATCH_REPOS
+    assert parse_watch_repos(" , , ") == DEFAULT_WATCH_REPOS
+
+
+def test_parse_watch_repos_handles_commas_and_whitespace():
+    assert parse_watch_repos("foo/bar,baz/qux") == ("foo/bar", "baz/qux")
+    assert parse_watch_repos(" foo/bar , baz/qux ") == ("foo/bar", "baz/qux")
+    assert parse_watch_repos("foo/bar,,baz/qux") == ("foo/bar", "baz/qux")
+    assert parse_watch_repos("solo/repo") == ("solo/repo",)
 
 
 def _iso(hours_ago: float) -> str:

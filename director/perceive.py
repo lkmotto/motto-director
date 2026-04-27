@@ -13,12 +13,27 @@ import httpx
 GITHUB_API = "https://api.github.com"
 NORTHFLANK_API = "https://api.northflank.com/v1"
 
-REPOS: tuple[str, ...] = (
+# Verified-real slugs under lkmotto (confirmed via GitHub org search). Override
+# at deploy time by setting WATCH_REPOS to a comma-separated list.
+DEFAULT_WATCH_REPOS: tuple[str, ...] = (
+    "lkmotto/motto-conductor",
     "lkmotto/motto-social-agent",
     "lkmotto/motto-sdr-agent",
     "lkmotto/motto-appraisal-pipeline",
     "lkmotto/motto-appraisal-cockpit",
 )
+
+
+def parse_watch_repos(raw: str | None) -> tuple[str, ...]:
+    """Parse a comma-separated WATCH_REPOS env value. Whitespace around each
+    slug is trimmed; empty/missing falls back to DEFAULT_WATCH_REPOS."""
+    if raw is None:
+        return DEFAULT_WATCH_REPOS
+    parts = tuple(s.strip() for s in raw.split(",") if s.strip())
+    return parts or DEFAULT_WATCH_REPOS
+
+
+REPOS: tuple[str, ...] = parse_watch_repos(os.environ.get("WATCH_REPOS"))
 
 NORTHFLANK_PROJECT = os.environ.get("NORTHFLANK_PROJECT", "motto")
 PIPELINE_AUTO_NUDGE_JOB = os.environ.get(
@@ -268,8 +283,12 @@ def _fetch_northflank_job(
     )
 
 
-def perceive(repos: tuple[str, ...] = REPOS) -> Snapshot:
-    """Collect a Snapshot of the motto stack."""
+def perceive(repos: tuple[str, ...] | None = None) -> Snapshot:
+    """Collect a Snapshot of the motto stack. If `repos` is not given, the
+    watch list is resolved from the WATCH_REPOS env (comma-separated),
+    falling back to DEFAULT_WATCH_REPOS."""
+    if repos is None:
+        repos = parse_watch_repos(os.environ.get("WATCH_REPOS"))
     _log("perceive.watch_repos", repos=list(repos))
     captured_at = datetime.now(UTC).isoformat()
     repo_states: list[RepoState] = []
