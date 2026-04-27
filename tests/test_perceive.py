@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -190,3 +191,50 @@ def test_perceive_handles_pending_ci_and_changes_requested():
     assert pr.approvals == 0
     assert snapshot.repos[0].head_age_hours is None
     assert snapshot.pipeline_auto_nudge.last_run_status is None
+
+
+@respx.mock
+def test_perceive_skips_404_repo_and_keeps_good_one(capsys):
+    """A single 404 repo must not abort the whole snapshot — we log it and
+    keep going."""
+    repos = ("lkmotto/missing-repo", "lkmotto/motto-social-agent")
+
+    # Bad repo: /repos/{repo} 404s. No other endpoints should be hit for it.
+    respx.get("https://api.github.com/repos/lkmotto/missing-repo").mock(
+        return_value=httpx.Response(404, json={"message": "Not Found"})
+    )
+
+    # Good repo: full happy-path mocks.
+    respx.get("https://api.github.com/repos/lkmotto/motto-social-agent").mock(
+        return_value=httpx.Response(200, json={"default_branch": "main"})
+    )
+    respx.get(
+        "https://api.github.com/repos/lkmotto/motto-social-agent/branches/main"
+    ).mock(
+        return_value=httpx.Response(
+            200,
+            json={"commit": {"commit": {"committer": {"date": _iso(1.0)}}}},
+        )
+    )
+    respx.get(
+        "https://api.github.com/repos/lkmotto/motto-social-agent/pulls"
+    ).mock(return_value=httpx.Response(200, json=[]))
+    respx.get(
+        "https://api.github.com/repos/lkmotto/motto-social-agent/issues"
+    ).mock(return_value=httpx.Response(200, json=[]))
+    respx.get(
+        "https://api.northflank.com/v1/projects/motto/jobs/pipeline-auto-nudge/runs"
+    ).mock(return_value=httpx.Response(200, json={"data": {"runs": []}}))
+
+    snapshot = perceive(repos=repos)
+
+    assert [r.repo for r in snapshot.repos] == ["lkmotto/motto-social-agent"]
+
+    log_lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+    events = [json.loads(ln) for ln in log_lines]
+    skipped = [e for e in events if e["event"] == "perceive.repo_skipped"]
+    assert len(skipped) == 1
+    assert skipped[0]["repo"] == "lkmotto/missing-repo"
+    assert skipped[0]["status_code"] == 404
+    watch = [e for e in events if e["event"] == "perceive.watch_repos"]
+    assert watch and watch[0]["repos"] == list(repos)

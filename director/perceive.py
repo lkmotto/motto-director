@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -69,6 +71,15 @@ class Snapshot:
     captured_at: str
     repos: list[RepoState] = field(default_factory=list)
     pipeline_auto_nudge: NorthflankJobStatus | None = None
+
+
+def _log(event: str, **fields: object) -> None:
+    record = {
+        "ts": datetime.now(UTC).isoformat(),
+        "event": event,
+        **fields,
+    }
+    print(json.dumps(record, default=str), file=sys.stdout, flush=True)
 
 
 def _age_hours(iso: str) -> float:
@@ -198,19 +209,42 @@ def _fetch_repo_issues(client: httpx.Client, repo: str) -> list[Issue]:
 
 def _fetch_default_branch_head(
     client: httpx.Client, repo: str
-) -> tuple[str, float | None]:
-    r = client.get(f"{GITHUB_API}/repos/{repo}", headers=_gh_headers())
-    r.raise_for_status()
-    default_branch = r.json().get("default_branch", "main")
-    rb = client.get(
-        f"{GITHUB_API}/repos/{repo}/branches/{default_branch}",
-        headers=_gh_headers(),
-    )
-    if rb.status_code != 200:
-        return default_branch, None
-    commit = rb.json().get("commit", {}).get("commit", {})
-    iso = commit.get("committer", {}).get("date") or commit.get("author", {}).get("date")
-    return default_branch, _age_hours(iso) if iso else None
+) -> tuple[str, float | None] | None:
+    """Probe the repo. Returns (default_branch, head_age_hours) on success,
+    or None if the repo is missing/unreachable — a single bad repo must not
+    abort the whole snapshot."""
+    try:
+        r = client.get(f"{GITHUB_API}/repos/{repo}", headers=_gh_headers())
+        r.raise_for_status()
+        default_branch = r.json().get("default_branch", "main")
+        rb = client.get(
+            f"{GITHUB_API}/repos/{repo}/branches/{default_branch}",
+            headers=_gh_headers(),
+        )
+        if rb.status_code != 200:
+            return default_branch, None
+        commit = rb.json().get("commit", {}).get("commit", {})
+        iso = (
+            commit.get("committer", {}).get("date")
+            or commit.get("author", {}).get("date")
+        )
+        return default_branch, _age_hours(iso) if iso else None
+    except httpx.HTTPStatusError as exc:
+        _log(
+            "perceive.repo_skipped",
+            repo=repo,
+            status_code=exc.response.status_code,
+            reason=exc.response.reason_phrase or "http_error",
+        )
+        return None
+    except httpx.RequestError as exc:
+        _log(
+            "perceive.repo_skipped",
+            repo=repo,
+            status_code=None,
+            reason=f"{type(exc).__name__}: {exc}",
+        )
+        return None
 
 
 def _fetch_northflank_job(
@@ -236,13 +270,17 @@ def _fetch_northflank_job(
 
 def perceive(repos: tuple[str, ...] = REPOS) -> Snapshot:
     """Collect a Snapshot of the motto stack."""
+    _log("perceive.watch_repos", repos=list(repos))
     captured_at = datetime.now(UTC).isoformat()
     repo_states: list[RepoState] = []
     pipeline_status: NorthflankJobStatus | None = None
 
     with httpx.Client(timeout=30.0) as client:
         for repo in repos:
-            default_branch, head_age = _fetch_default_branch_head(client, repo)
+            head = _fetch_default_branch_head(client, repo)
+            if head is None:
+                continue  # 404 / unreachable — skipped + logged inside helper
+            default_branch, head_age = head
             repo_states.append(
                 RepoState(
                     repo=repo,
