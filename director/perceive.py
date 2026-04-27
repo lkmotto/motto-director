@@ -85,10 +85,17 @@ def _gh_headers() -> dict[str, str]:
     }
 
 
+def northflank_api_key() -> str:
+    """Read Northflank credential. Prefers NORTHFLANK_API_KEY (per shared
+    sdr-agent-secrets group); falls back to NORTHFLANK_API_TOKEN."""
+    return os.environ.get("NORTHFLANK_API_KEY") or os.environ.get(
+        "NORTHFLANK_API_TOKEN", ""
+    )
+
+
 def _nf_headers() -> dict[str, str]:
-    token = os.environ.get("NORTHFLANK_API_TOKEN", "")
     return {
-        "Authorization": f"Bearer {token}",
+        "Authorization": f"Bearer {northflank_api_key()}",
         "Accept": "application/json",
     }
 

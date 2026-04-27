@@ -6,6 +6,8 @@ import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import httpx
+
 from director.ideate import ideate
 from director.perceive import (
     Issue,
@@ -158,3 +160,60 @@ def test_ideate_handles_fenced_json_response():
 def test_ideate_returns_empty_on_unparseable_response():
     client = _fake_anthropic("not json at all")
     assert ideate(_snapshot(), client=client) == []
+
+
+def test_provider_chain_orders_primary_first(monkeypatch):
+    from director.ideate import _provider_chain
+
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    assert _provider_chain() == ["anthropic", "groq", "openrouter"]
+
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    assert _provider_chain() == ["groq", "anthropic", "openrouter"]
+
+    monkeypatch.setenv("LLM_PROVIDER", "openrouter")
+    assert _provider_chain() == ["openrouter", "anthropic", "groq"]
+
+
+def test_ideate_falls_back_to_groq_when_anthropic_key_missing(monkeypatch):
+    import respx
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("GROQ_API_KEY", "groq-test")
+
+    payload = {
+        "moves": [
+            {
+                "repo": "lkmotto/motto-sdr-agent",
+                "kind": "file_issue",
+                "title": "X",
+                "rationale": "y",
+                "prompt_for_claude_code": "",
+                "priority": 3,
+                "intent": "Fallback chain reached groq because ANTHROPIC_API_KEY is unset.",
+            }
+        ]
+    }
+
+    with respx.mock(assert_all_called=True) as mock:
+        mock.post("https://api.groq.com/openai/v1/chat/completions").mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {"message": {"content": json.dumps(payload)}}
+                    ]
+                },
+            )
+        )
+        moves = ideate(_snapshot())
+
+    assert len(moves) == 1
+    assert moves[0].kind == "file_issue"
+
+
+def test_ideate_returns_empty_when_all_providers_unavailable(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    assert ideate(_snapshot()) == []
