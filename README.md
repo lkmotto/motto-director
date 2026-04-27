@@ -34,17 +34,34 @@ perceive → ideate → act
 
 ## Environment
 
+All Northflank jobs in the motto org inherit the shared secret group
+`sdr-agent-secrets`, so no per-job Doppler/secret wiring is required — the
+director picks these up automatically.
+
+Provided by `sdr-agent-secrets`:
+
 | Variable | Purpose |
 | --- | --- |
 | `GITHUB_TOKEN` | Read repo state, file issues, merge PRs |
-| `NORTHFLANK_API_TOKEN` | Read `pipeline-auto-nudge` last-run status |
-| `ANTHROPIC_API_KEY` | Call Claude Opus during ideate |
+| `NORTHFLANK_API_KEY` | Read `pipeline-auto-nudge` last-run status; auth for `/tick` |
+| `ANTHROPIC_API_KEY` | Primary LLM for ideate (Claude Opus) |
+| `GROQ_API_KEY` | Fallback LLM (cost-aware) |
+| `OPENROUTER_API_KEY` | Last-resort fallback LLM |
 | `CLAUDE_CODE_SESSION_TOKEN` | Auth for `POST https://claude.ai/api/sessions` |
+
+Director-specific overrides (optional):
+
+| Variable | Purpose |
+| --- | --- |
+| `LLM_PROVIDER` | Primary provider for ideate: `anthropic` (default), `groq`, `openrouter`. Chain falls through to the others if the primary's API key is missing or the call errors. |
 | `DIRECTOR_DRY_RUN` | Set `1` to log moves without executing them |
 | `NORTHFLANK_PROJECT` | Northflank project slug (default `motto`) |
 | `PIPELINE_AUTO_NUDGE_JOB` | Job name (default `pipeline-auto-nudge`) |
 | `APPRAISAL_PIPELINE_TICK_URL` | Override the `/tick` endpoint URL |
-| `DIRECTOR_MODEL` | Override Claude model (default `claude-opus-4-7`) |
+| `DIRECTOR_MODEL` | Override Anthropic model (default `claude-opus-4-7`) |
+| `DIRECTOR_GROQ_MODEL` | Override Groq model (default `llama-3.3-70b-versatile`) |
+| `DIRECTOR_OPENROUTER_MODEL` | Override OpenRouter model (default `anthropic/claude-3.5-sonnet`) |
+| `NORTHFLANK_API_TOKEN` | Legacy fallback if `NORTHFLANK_API_KEY` is unset |
 
 ## Local
 

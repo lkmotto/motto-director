@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import httpx
 
 from director.ideate import NextMove
-from director.perceive import PullRequest, Snapshot
+from director.perceive import PullRequest, Snapshot, northflank_api_key
 
 GITHUB_API = "https://api.github.com"
 CLAUDE_CODE_SESSIONS_URL = "https://claude.ai/api/sessions"
@@ -126,9 +126,14 @@ def _merge_pr(
 
 
 def _nudge_pipeline(client: httpx.Client, move: NextMove) -> ActResult:
+    headers: dict[str, str] = {}
+    nf_key = northflank_api_key()
+    if nf_key:
+        headers["Authorization"] = f"Bearer {nf_key}"
     r = client.post(
         APPRAISAL_PIPELINE_TICK_URL,
         json={"reason": move.intent, "source": "motto-director"},
+        headers=headers,
         timeout=30.0,
     )
     if r.status_code >= 300:

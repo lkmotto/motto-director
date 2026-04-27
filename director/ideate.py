@@ -1,4 +1,5 @@
-"""Ideate: ask Anthropic Opus to rank next moves for the motto stack."""
+"""Ideate: ask an LLM (Anthropic by default; falls back to Groq, OpenRouter)
+to rank next moves for the motto stack."""
 
 from __future__ import annotations
 
@@ -7,6 +8,7 @@ import os
 from dataclasses import asdict, dataclass
 from typing import Literal
 
+import httpx
 from anthropic import Anthropic
 
 from director.perceive import Snapshot
@@ -15,7 +17,13 @@ MoveKind = Literal[
     "spawn_session", "file_issue", "merge_pr", "nudge_pipeline", "noop"
 ]
 
-MODEL = os.environ.get("DIRECTOR_MODEL", "claude-opus-4-7")
+ANTHROPIC_MODEL = os.environ.get("DIRECTOR_MODEL", "claude-opus-4-7")
+GROQ_MODEL = os.environ.get("DIRECTOR_GROQ_MODEL", "llama-3.3-70b-versatile")
+OPENROUTER_MODEL = os.environ.get(
+    "DIRECTOR_OPENROUTER_MODEL", "anthropic/claude-3.5-sonnet"
+)
+
+_PROVIDER_ORDER: tuple[str, ...] = ("anthropic", "groq", "openrouter")
 
 SYSTEM_PROMPT = """You are the labor-utilization director for the motto stack.
 
@@ -79,25 +87,107 @@ def _coerce_move(raw: dict) -> NextMove | None:
     )
 
 
+def _provider_chain() -> list[str]:
+    primary = os.environ.get("LLM_PROVIDER", "anthropic").lower()
+    rest = [p for p in _PROVIDER_ORDER if p != primary]
+    chain = [primary, *rest] if primary in _PROVIDER_ORDER else list(_PROVIDER_ORDER)
+    return chain
+
+
+def _call_anthropic(client: Anthropic, system: str, user_msg: str) -> str:
+    response = client.messages.create(
+        model=ANTHROPIC_MODEL,
+        max_tokens=4096,
+        system=system,
+        messages=[{"role": "user", "content": user_msg}],
+    )
+    return "".join(
+        block.text for block in response.content if getattr(block, "type", "") == "text"
+    )
+
+
+def _call_openai_compatible(
+    *, base_url: str, api_key: str, model: str, system: str, user_msg: str
+) -> str:
+    r = httpx.post(
+        f"{base_url}/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_msg},
+            ],
+            "max_tokens": 4096,
+            "response_format": {"type": "json_object"},
+        },
+        timeout=60.0,
+    )
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"]
+
+
+def _try_provider(provider: str, system: str, user_msg: str) -> str | None:
+    if provider == "anthropic":
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            return None
+        return _call_anthropic(Anthropic(), system, user_msg)
+    if provider == "groq":
+        key = os.environ.get("GROQ_API_KEY")
+        if not key:
+            return None
+        return _call_openai_compatible(
+            base_url="https://api.groq.com/openai/v1",
+            api_key=key,
+            model=GROQ_MODEL,
+            system=system,
+            user_msg=user_msg,
+        )
+    if provider == "openrouter":
+        key = os.environ.get("OPENROUTER_API_KEY")
+        if not key:
+            return None
+        return _call_openai_compatible(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=key,
+            model=OPENROUTER_MODEL,
+            system=system,
+            user_msg=user_msg,
+        )
+    return None
+
+
 def ideate(snapshot: Snapshot, *, client: Anthropic | None = None) -> list[NextMove]:
-    """Call Claude Opus and return a ranked list of NextMove objects."""
-    client = client or Anthropic()
+    """Call an LLM and return a ranked list of NextMove objects.
+
+    If `client` is provided, use it directly (test override). Otherwise walk the
+    provider chain (LLM_PROVIDER first; default 'anthropic'), trying groq and
+    openrouter as cost-aware fallbacks if the primary is unavailable or errors.
+    """
     user_msg = (
         "Snapshot of the motto stack:\n\n```json\n"
         + _snapshot_to_prompt(snapshot)
         + "\n```\n\nPropose the ranked next moves as strict JSON."
     )
 
-    response = client.messages.create(
-        model=MODEL,
-        max_tokens=4096,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_msg}],
-    )
+    text: str | None = None
+    if client is not None:
+        text = _call_anthropic(client, SYSTEM_PROMPT, user_msg)
+    else:
+        for provider in _provider_chain():
+            try:
+                text = _try_provider(provider, SYSTEM_PROMPT, user_msg)
+                if text:
+                    break
+            except Exception:
+                continue
 
-    text = "".join(
-        block.text for block in response.content if getattr(block, "type", "") == "text"
-    )
+    if not text:
+        return []
+
     payload = _extract_json(text)
     raw_moves = payload.get("moves", []) if isinstance(payload, dict) else []
 
