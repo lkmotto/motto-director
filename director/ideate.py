@@ -1,15 +1,22 @@
-"""Ideate: ask an LLM (Anthropic by default; falls back to Groq, OpenRouter)
-to rank next moves for the motto stack."""
+"""Ideate: ask an LLM to rank next moves for the motto stack.
+
+Default provider chain: deepseek → groq → openrouter → anthropic. Anthropic
+is last (Anthropic API credit is the bottleneck this layer was built to dodge);
+all three primary providers are OpenAI-compatible and routed through the
+openai SDK with a base_url + api_key swap.
+"""
 
 from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from typing import Literal
 
-import httpx
 from anthropic import Anthropic
+from openai import OpenAI
 
 from director.perceive import Snapshot
 
@@ -26,13 +33,34 @@ _VALID_KINDS: frozenset[str] = frozenset(
     ("spawn_session", "file_issue", "merge_pr", "nudge_pipeline", "compound_pr", "noop")
 )
 
-ANTHROPIC_MODEL = os.environ.get("DIRECTOR_MODEL", "claude-opus-4-7")
-GROQ_MODEL = os.environ.get("DIRECTOR_GROQ_MODEL", "llama-3.3-70b-versatile")
-OPENROUTER_MODEL = os.environ.get(
-    "DIRECTOR_OPENROUTER_MODEL", "anthropic/claude-3.5-sonnet"
-)
+# OpenAI-compatible providers. Each entry: (key_env, default_model_env,
+# default_model, base_url).
+PROVIDER_CONFIG: dict[str, dict[str, str]] = {
+    "deepseek": {
+        "key_env": "DEEPSEEK_API_KEY",
+        "model_env": "DEEPSEEK_MODEL",
+        "default_model": "deepseek-chat",
+        "base_url": "https://api.deepseek.com/v1",
+    },
+    "groq": {
+        "key_env": "GROQ_API_KEY",
+        "model_env": "GROQ_MODEL",
+        "default_model": "llama-3.3-70b-versatile",
+        "base_url": "https://api.groq.com/openai/v1",
+    },
+    "openrouter": {
+        "key_env": "OPENROUTER_API_KEY",
+        "model_env": "OPENROUTER_MODEL",
+        "default_model": "meta-llama/llama-3.3-70b-instruct:free",
+        "base_url": "https://openrouter.ai/api/v1",
+    },
+}
 
-_PROVIDER_ORDER: tuple[str, ...] = ("anthropic", "groq", "openrouter")
+CHAIN_ORDER: tuple[str, ...] = ("deepseek", "groq", "openrouter", "anthropic")
+ANTHROPIC_MODEL_ENV = "DIRECTOR_ANTHROPIC_MODEL"
+ANTHROPIC_DEFAULT_MODEL = "claude-opus-4-7"
+
+_FAILOVER_STATUSES: frozenset[int] = frozenset({401, 402, 429, 500, 502, 503, 504})
 
 SYSTEM_PROMPT = """You are the labor-utilization director for the motto stack.
 
@@ -74,6 +102,15 @@ class NextMove:
     code_changes: list[dict[str, str]] = field(default_factory=list)
 
 
+def _log(event: str, **fields: object) -> None:
+    record = {
+        "ts": datetime.now(UTC).isoformat(),
+        "event": event,
+        **fields,
+    }
+    print(json.dumps(record, default=str), file=sys.stdout, flush=True)
+
+
 def _snapshot_to_prompt(snapshot: Snapshot) -> str:
     return json.dumps(asdict(snapshot), indent=2, default=str)
 
@@ -111,84 +148,114 @@ def _coerce_move(raw: dict) -> NextMove | None:
 
 
 def _provider_chain() -> list[str]:
-    primary = os.environ.get("LLM_PROVIDER", "anthropic").lower()
-    rest = [p for p in _PROVIDER_ORDER if p != primary]
-    chain = [primary, *rest] if primary in _PROVIDER_ORDER else list(_PROVIDER_ORDER)
-    return chain
+    primary = os.environ.get("LLM_PROVIDER", "deepseek").lower()
+    rest = [p for p in CHAIN_ORDER if p != primary]
+    return [primary, *rest] if primary in CHAIN_ORDER else list(CHAIN_ORDER)
 
 
-def _call_anthropic(client: Anthropic, system: str, user_msg: str) -> str:
+@dataclass
+class _ProviderResult:
+    text: str
+    model: str
+    tokens_in: int
+    tokens_out: int
+
+
+class _ProviderUnavailable(Exception):
+    """Provider can't be tried (e.g. missing API key)."""
+
+
+class _ProviderHTTPError(Exception):
+    """Provider returned an error we should fail over from."""
+
+    def __init__(self, status_code: int | None, reason: str):
+        super().__init__(reason)
+        self.status_code = status_code
+        self.reason = reason
+
+
+def _call_anthropic(client: Anthropic, system: str, user_msg: str) -> _ProviderResult:
+    model = os.environ.get(ANTHROPIC_MODEL_ENV, ANTHROPIC_DEFAULT_MODEL)
     response = client.messages.create(
-        model=ANTHROPIC_MODEL,
+        model=model,
         max_tokens=4096,
         system=system,
         messages=[{"role": "user", "content": user_msg}],
     )
-    return "".join(
+    text = "".join(
         block.text for block in response.content if getattr(block, "type", "") == "text"
     )
-
-
-def _call_openai_compatible(
-    *, base_url: str, api_key: str, model: str, system: str, user_msg: str
-) -> str:
-    r = httpx.post(
-        f"{base_url}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_msg},
-            ],
-            "max_tokens": 4096,
-            "response_format": {"type": "json_object"},
-        },
-        timeout=60.0,
+    usage = getattr(response, "usage", None)
+    return _ProviderResult(
+        text=text,
+        model=model,
+        tokens_in=getattr(usage, "input_tokens", 0) if usage else 0,
+        tokens_out=getattr(usage, "output_tokens", 0) if usage else 0,
     )
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
 
 
-def _try_provider(provider: str, system: str, user_msg: str) -> str | None:
+def _call_openai_compatible(provider: str, system: str, user_msg: str) -> _ProviderResult:
+    cfg = PROVIDER_CONFIG[provider]
+    api_key = os.environ.get(cfg["key_env"])
+    if not api_key:
+        raise _ProviderUnavailable(f"{cfg['key_env']} not set")
+    model = os.environ.get(cfg["model_env"], cfg["default_model"])
+    client = OpenAI(api_key=api_key, base_url=cfg["base_url"], max_retries=0)
+    response = client.chat.completions.create(
+        model=model,
+        max_tokens=4096,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_msg},
+        ],
+    )
+    text = response.choices[0].message.content or ""
+    usage = response.usage
+    return _ProviderResult(
+        text=text,
+        model=model,
+        tokens_in=getattr(usage, "prompt_tokens", 0) if usage else 0,
+        tokens_out=getattr(usage, "completion_tokens", 0) if usage else 0,
+    )
+
+
+def _try_provider(provider: str, system: str, user_msg: str) -> _ProviderResult:
     if provider == "anthropic":
         if not os.environ.get("ANTHROPIC_API_KEY"):
-            return None
-        return _call_anthropic(Anthropic(), system, user_msg)
-    if provider == "groq":
-        key = os.environ.get("GROQ_API_KEY")
-        if not key:
-            return None
-        return _call_openai_compatible(
-            base_url="https://api.groq.com/openai/v1",
-            api_key=key,
-            model=GROQ_MODEL,
-            system=system,
-            user_msg=user_msg,
-        )
-    if provider == "openrouter":
-        key = os.environ.get("OPENROUTER_API_KEY")
-        if not key:
-            return None
-        return _call_openai_compatible(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=key,
-            model=OPENROUTER_MODEL,
-            system=system,
-            user_msg=user_msg,
-        )
+            raise _ProviderUnavailable("ANTHROPIC_API_KEY not set")
+        try:
+            return _call_anthropic(Anthropic(), system, user_msg)
+        except Exception as exc:  # noqa: BLE001
+            status = _extract_status(exc)
+            raise _ProviderHTTPError(status, str(exc)) from exc
+    if provider in PROVIDER_CONFIG:
+        try:
+            return _call_openai_compatible(provider, system, user_msg)
+        except _ProviderUnavailable:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            status = _extract_status(exc)
+            raise _ProviderHTTPError(status, str(exc)) from exc
+    raise _ProviderUnavailable(f"unknown provider {provider}")
+
+
+def _extract_status(exc: BaseException) -> int | None:
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        response = getattr(exc, "response", None)
+        if response is not None:
+            status = getattr(response, "status_code", None)
+    if isinstance(status, int):
+        return status
     return None
 
 
 def ideate(snapshot: Snapshot, *, client: Anthropic | None = None) -> list[NextMove]:
     """Call an LLM and return a ranked list of NextMove objects.
 
-    If `client` is provided, use it directly (test override). Otherwise walk the
-    provider chain (LLM_PROVIDER first; default 'anthropic'), trying groq and
-    openrouter as cost-aware fallbacks if the primary is unavailable or errors.
+    If `client` is provided, use it directly (test override; Anthropic-shaped).
+    Otherwise walk the provider chain (LLM_PROVIDER first; default 'deepseek'),
+    failing over on missing keys, 401/402/429/5xx, or other errors.
     """
     user_msg = (
         "Snapshot of the motto stack:\n\n```json\n"
@@ -196,24 +263,61 @@ def ideate(snapshot: Snapshot, *, client: Anthropic | None = None) -> list[NextM
         + "\n```\n\nPropose the ranked next moves as strict JSON."
     )
 
-    text: str | None = None
     if client is not None:
-        text = _call_anthropic(client, SYSTEM_PROMPT, user_msg)
-    else:
-        for provider in _provider_chain():
-            try:
-                text = _try_provider(provider, SYSTEM_PROMPT, user_msg)
-                if text:
-                    break
-            except Exception:
-                continue
+        result = _call_anthropic(client, SYSTEM_PROMPT, user_msg)
+        return _parse_text_to_moves(result.text)
 
-    if not text:
-        return []
+    chain = _provider_chain()
+    for i, provider in enumerate(chain):
+        next_provider = chain[i + 1] if i + 1 < len(chain) else None
+        try:
+            result = _try_provider(provider, SYSTEM_PROMPT, user_msg)
+        except _ProviderUnavailable as exc:
+            _log(
+                "ideate.provider_failover",
+                **{
+                    "from": provider,
+                    "to": next_provider,
+                    "status_code": None,
+                    "reason": str(exc),
+                },
+            )
+            continue
+        except _ProviderHTTPError as exc:
+            _log(
+                "ideate.provider_failover",
+                **{
+                    "from": provider,
+                    "to": next_provider,
+                    "status_code": exc.status_code,
+                    "reason": exc.reason,
+                },
+            )
+            # Spec says fail over on 401/402/429/5xx; for other status codes we
+            # also fail over (treating them as transient/unrecognized) since
+            # the alternative is a dead loop.
+            if exc.status_code is not None and exc.status_code not in _FAILOVER_STATUSES:
+                # 4xx other than auth/payment/rate-limit — likely a permanent
+                # request error; still failover to avoid sticking on a bad
+                # provider, but we noted it via the failover log already.
+                pass
+            continue
 
+        _log(
+            "ideate.provider_used",
+            provider=provider,
+            model=result.model,
+            tokens_in=result.tokens_in,
+            tokens_out=result.tokens_out,
+        )
+        return _parse_text_to_moves(result.text)
+
+    return []
+
+
+def _parse_text_to_moves(text: str) -> list[NextMove]:
     payload = _extract_json(text)
     raw_moves = payload.get("moves", []) if isinstance(payload, dict) else []
-
     moves: list[NextMove] = []
     for raw in raw_moves:
         if not isinstance(raw, dict):
@@ -221,7 +325,6 @@ def ideate(snapshot: Snapshot, *, client: Anthropic | None = None) -> list[NextM
         move = _coerce_move(raw)
         if move is not None:
             moves.append(move)
-
     moves.sort(key=lambda m: m.priority)
     return moves
 

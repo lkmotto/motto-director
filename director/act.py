@@ -92,6 +92,13 @@ def _file_issue(client: httpx.Client, move: NextMove) -> ActResult:
 
 
 def _spawn_session(client: httpx.Client, move: NextMove) -> ActResult:
+    if not os.environ.get("CLAUDE_CODE_SESSION_TOKEN"):
+        _log("spawn_session.skipped", reason="no_session_token", repo=move.repo)
+        return ActResult(
+            move=move,
+            status="skipped",
+            detail="no CLAUDE_CODE_SESSION_TOKEN; spawn_session is optional",
+        )
     if not move.prompt_for_claude_code:
         return ActResult(
             move=move, status="skipped", detail="missing prompt_for_claude_code"

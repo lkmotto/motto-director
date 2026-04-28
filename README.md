@@ -45,18 +45,38 @@ Provided by `sdr-agent-secrets`:
 
 | Variable | Purpose |
 | --- | --- |
-| `GITHUB_TOKEN` | Read repo state, file issues, merge PRs |
+| `GITHUB_TOKEN` | Read repo state, file issues, merge PRs, append to compound PRs |
 | `NORTHFLANK_API_KEY` | Read `pipeline-auto-nudge` last-run status; auth for `/tick` |
-| `ANTHROPIC_API_KEY` | Primary LLM for ideate (Claude Opus) |
-| `GROQ_API_KEY` | Fallback LLM (cost-aware) |
-| `OPENROUTER_API_KEY` | Last-resort fallback LLM |
-| `CLAUDE_CODE_SESSION_TOKEN` | Auth for `POST https://claude.ai/api/sessions` |
+| `DEEPSEEK_API_KEY` | Primary LLM for ideate. Recommended on cost+quality. |
+| `GROQ_API_KEY` | Fastest free fallback for ideate. |
+| `OPENROUTER_API_KEY` | Free-tier fallback for ideate. |
+| `ANTHROPIC_API_KEY` | Optional last-resort fallback. The pivot away from Anthropic happened because we ran out of API credit; only set this if you've topped it up. |
+| `CLAUDE_CODE_SESSION_TOKEN` | Optional. When unset, `spawn_session` moves are skipped (the run logs `spawn_session.skipped` and continues). |
+
+### LLM provider matrix
+
+The default chain is **deepseek → groq → openrouter → anthropic**. On
+401/402/429/5xx (or a missing key, or any unexpected error) the director
+fails over to the next provider and emits `ideate.provider_failover`. On
+success it emits `ideate.provider_used {provider, model, tokens_in,
+tokens_out}`.
+
+| `LLM_PROVIDER` | Default model | Base URL | Get a key |
+| --- | --- | --- | --- |
+| `deepseek` *(default)* | `deepseek-chat` | `https://api.deepseek.com/v1` | https://platform.deepseek.com — cheap, high-quality |
+| `groq` | `llama-3.3-70b-versatile` | `https://api.groq.com/openai/v1` | https://console.groq.com — fastest free option |
+| `openrouter` | `meta-llama/llama-3.3-70b-instruct:free` (overridable via `OPENROUTER_MODEL`) | `https://openrouter.ai/api/v1` | https://openrouter.ai — free tier on llama-3.3 |
+| `anthropic` | `claude-opus-4-7` | n/a (Anthropic SDK) | https://console.anthropic.com — last in chain |
+
+All three OpenAI-compatible providers go through the `openai` SDK with a
+`base_url` swap.
 
 Director-specific overrides (optional):
 
 | Variable | Purpose |
 | --- | --- |
-| `LLM_PROVIDER` | Primary provider for ideate: `anthropic` (default), `groq`, `openrouter`. Chain falls through to the others if the primary's API key is missing or the call errors. |
+| `LLM_PROVIDER` | Primary provider for ideate: `deepseek` (default), `groq`, `openrouter`, `anthropic`. The chain fails over through the rest in canonical order. |
+| `DEEPSEEK_MODEL` / `GROQ_MODEL` / `OPENROUTER_MODEL` / `DIRECTOR_ANTHROPIC_MODEL` | Model overrides per provider. |
 | `WATCH_REPOS` | Comma-separated repo slugs to perceive (e.g. `lkmotto/motto-social-agent,lkmotto/motto-sdr-agent`). Empty/unset uses `DEFAULT_WATCH_REPOS`. Set this on the Northflank job to override the default watch list. |
 | `DIRECTOR_COMPOUND_BRANCH` | Long-lived branch name for the rolling compound PR per repo. Default `director/auto/compound`. |
 | `DIRECTOR_COMPOUND_MAX_MOVES` | Force-flush (enable auto-merge) when the compound PR reaches this many moves. Default `10`. |
@@ -66,9 +86,6 @@ Director-specific overrides (optional):
 | `NORTHFLANK_PROJECT` | Northflank project slug (default `motto`) |
 | `PIPELINE_AUTO_NUDGE_JOB` | Job name (default `pipeline-auto-nudge`) |
 | `APPRAISAL_PIPELINE_TICK_URL` | Override the `/tick` endpoint URL |
-| `DIRECTOR_MODEL` | Override Anthropic model (default `claude-opus-4-7`) |
-| `DIRECTOR_GROQ_MODEL` | Override Groq model (default `llama-3.3-70b-versatile`) |
-| `DIRECTOR_OPENROUTER_MODEL` | Override OpenRouter model (default `anthropic/claude-3.5-sonnet`) |
 | `NORTHFLANK_API_TOKEN` | Legacy fallback if `NORTHFLANK_API_KEY` is unset |
 
 ## Local
