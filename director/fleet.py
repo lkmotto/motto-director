@@ -14,7 +14,7 @@ import base64
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -122,9 +122,7 @@ async def langfuse_recent_traces(
         return []
 
     auth = base64.b64encode(f"{pk}:{sk}".encode()).decode()
-    from_ts = (
-        datetime.now(timezone.utc) - timedelta(minutes=since_minutes)
-    ).isoformat()
+    from_ts = (datetime.now(UTC) - timedelta(minutes=since_minutes)).isoformat()
 
     params: dict[str, Any] = {"fromTimestamp": from_ts, "limit": limit}
     if agent_name:

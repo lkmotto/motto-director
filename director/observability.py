@@ -263,7 +263,7 @@ def _flatten(d: dict[str, Any]) -> dict[str, Any]:
     """OTel span attributes must be primitives. Stringify nested values."""
     out: dict[str, Any] = {}
     for k, v in d.items():
-        out[k] = v if isinstance(v, (str, int, float, bool)) else str(v)
+        out[k] = v if isinstance(v, str | int | float | bool) else str(v)
     return out
 
 
