@@ -8,7 +8,7 @@ Three things in one module:
 All functions no-op gracefully when env vars aren't set, so this module
 is safe to import in dev/test/CI without provisioning anything.
 
-Required to enable Langfuse tracing:
+Required to enable Langfuse tracing (BOTH must be set):
     OTEL_EXPORTER_OTLP_ENDPOINT  https://cloud.langfuse.com/api/public/otel
     OTEL_EXPORTER_OTLP_HEADERS   Authorization=Basic <b64(public_key:secret_key)>
 
@@ -22,6 +22,7 @@ Optional:
 
 from __future__ import annotations
 
+import atexit
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -35,7 +36,16 @@ _TRACER: Any = None
 
 
 def _otel_enabled() -> bool:
-    return bool(os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"))
+    """Both endpoint and auth headers must be present.
+
+    If endpoint is set but headers aren't (typo, Doppler sync miss),
+    every export silently 401s from Langfuse with no warning. Requiring
+    both means we cleanly no-op instead of phantom-tracing.
+    """
+    return bool(
+        os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+        and os.environ.get("OTEL_EXPORTER_OTLP_HEADERS")
+    )
 
 
 def _mcp_enabled() -> bool:
@@ -74,7 +84,17 @@ def _setup_otel(agent_name: str) -> None:
     )
     provider = TracerProvider(resource=resource)
     provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
-    trace.set_tracer_provider(provider)
+
+    # Guard against double-init: if a real TracerProvider is already
+    # registered, keep it. Otherwise the previous provider's
+    # BatchSpanProcessor flush thread is orphaned.
+    if not isinstance(trace.get_tracer_provider(), TracerProvider):
+        trace.set_tracer_provider(provider)
+        # Flush buffered spans on clean process exit (SIGTERM during
+        # Northflank redeploy, container shutdown). Without this the
+        # last-window of spans — often the most interesting ones —
+        # are dropped silently.
+        atexit.register(provider.force_flush)
 
     _try_instrument("opentelemetry.instrumentation.httpx", "HTTPXClientInstrumentor")
     _try_instrument("opentelemetry.instrumentation.requests", "RequestsInstrumentor")
@@ -87,8 +107,11 @@ def _try_instrument(module_path: str, cls_name: str) -> None:
     try:
         mod = __import__(module_path, fromlist=[cls_name])
         getattr(mod, cls_name)().instrument()
-    except Exception:
-        pass
+    except Exception as e:
+        # Debug-only: missing package, version skew, or already-instrumented
+        # all land here. The log lets you diagnose "why are my httpx spans
+        # missing?" without changing behavior.
+        logger.debug("Skipping %s.%s instrumentation: %s", module_path, cls_name, e)
 
 
 def init_fastapi(app: Any) -> None:
