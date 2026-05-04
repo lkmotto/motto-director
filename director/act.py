@@ -3,6 +3,8 @@ nudge_pipeline, compound_pr)."""
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import json
 import os
 import sys
@@ -12,7 +14,7 @@ from datetime import UTC, datetime
 
 import httpx
 
-from director import policy
+from director import fleet, policy
 from director.compound import (
     CodeChange,
     CompoundEntry,
@@ -45,6 +47,32 @@ class ActResult:
     move: NextMove
     status: str  # "executed" | "skipped" | "dry_run" | "error"
     detail: str = ""
+
+
+# main.py sets this before calling act(); act helpers read it to attach
+# I/O capture (artifacts + decisions) to the right fleet run row. None
+# means "no fleet run open" — capture functions then no-op.
+fleet_run_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "fleet_run_id", default=None
+)
+
+
+def _fire_and_forget(coro) -> None:
+    """Run an async fleet-capture coroutine from sync act() helpers.
+
+    The sync `act()` is called from within `_run_async()` which is itself
+    inside `asyncio.run`. We can't `await` here, so we schedule the coroutine
+    on the running loop. If there is no loop (pure unit tests calling act()
+    directly), we close the coroutine cleanly so we don't leak a 'coroutine
+    was never awaited' warning. This is best-effort capture — the cycle
+    must keep running even if the MCP server is down.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        coro.close()
+        return
+    loop.create_task(coro)
 
 
 def _dry_run() -> bool:
@@ -142,6 +170,25 @@ def _spawn_session(
         return ActResult(
             move=move, status="skipped", detail="missing prompt_for_claude_code"
         )
+
+    fleet_run_id = fleet_run_id_var.get()
+    pending_token = uuid.uuid4().hex[:12]
+
+    # Capture the outbound prompt BEFORE the network call — we want a record
+    # even if the spawn errors out.
+    _fire_and_forget(
+        fleet.record_artifact(
+            run_id=fleet_run_id,
+            kind="claude_session_prompt",
+            ref=pending_token,
+            meta={
+                "prompt": move.prompt_for_claude_code,
+                "intent": move.intent,
+                "repo": move.repo,
+            },
+        )
+    )
+
     r = client.post(
         CLAUDE_CODE_SESSIONS_URL,
         headers=_claude_session_headers(),
@@ -154,10 +201,39 @@ def _spawn_session(
     if r.status_code >= 300:
         return ActResult(move=move, status="error", detail=f"{r.status_code} {r.text}")
     data = r.json() if r.text else {}
+    session_url = data.get("session_url") or data.get("id", "")
+
+    response_summary = json.dumps(data, default=str)[:500]
+    _fire_and_forget(
+        fleet.record_artifact(
+            run_id=fleet_run_id,
+            kind="claude_session",
+            ref=session_url,
+            meta={
+                "session_id": data.get("id"),
+                "status_code": r.status_code,
+                "response_summary": response_summary,
+                "pending_token": pending_token,
+            },
+        )
+    )
+    _fire_and_forget(
+        fleet.record_decision(
+            run_id=fleet_run_id,
+            choice="spawned_claude_session",
+            rationale=move.intent,
+            evidence={
+                "repo": move.repo,
+                "title": move.title,
+                "session_url": session_url,
+            },
+        )
+    )
+
     return ActResult(
         move=move,
         status="executed",
-        detail=data.get("session_url") or data.get("id", ""),
+        detail=session_url,
     )
 
 
@@ -188,6 +264,22 @@ def _merge_pr(
     )
     if r.status_code >= 300:
         return ActResult(move=move, status="error", detail=f"{r.status_code} {r.text}")
+
+    _fire_and_forget(
+        fleet.record_decision(
+            run_id=fleet_run_id_var.get(),
+            choice="merged_pr",
+            rationale=move.intent,
+            evidence={
+                "repo": move.repo,
+                "pr_number": pr.number,
+                "url": pr.url,
+                "ci_status": pr.ci_status,
+                "approvals": pr.approvals,
+            },
+        )
+    )
+
     return ActResult(move=move, status="executed", detail=f"merged #{pr.number}")
 
 
@@ -246,6 +338,20 @@ def _compound_pr(
         repo=move.repo,
         pr_number=pr_number,
         moves_in_pr=len(entries),
+    )
+    _fire_and_forget(
+        fleet.record_decision(
+            run_id=fleet_run_id_var.get(),
+            choice="compound_pr_appended",
+            rationale=move.rationale,
+            evidence={
+                "repo": move.repo,
+                "pr_number": pr_number,
+                "branch": branch,
+                "commit_sha": commit_sha,
+                "moves_in_pr": len(entries),
+            },
+        )
     )
 
     max_moves = compound_max_moves()
