@@ -51,7 +51,7 @@ Provided by `sdr-agent-secrets`:
 | `GROQ_API_KEY` | Fastest free fallback for ideate. |
 | `OPENROUTER_API_KEY` | Free-tier fallback for ideate. |
 | `ANTHROPIC_API_KEY` | Optional last-resort fallback. The pivot away from Anthropic happened because we ran out of API credit; only set this if you've topped it up. |
-| `CLAUDE_CODE_SESSION_TOKEN` | Optional. When unset, `spawn_session` moves are skipped (the run logs `spawn_session.skipped` and continues). |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Canonical Claude Max OAuth token (Doppler `motto-core/prd`). When unset, `spawn_session` moves are skipped (the run logs `spawn_session.skipped` and continues). For backward compat, the legacy `CLAUDE_CODE_SESSION_TOKEN` is still read as a fallback. |
 
 ### LLM provider matrix
 
