@@ -26,6 +26,11 @@ jobs:
         run: ruff check .
       - name: Test
         run: pytest
+      - name: Verify DEFAULT_WATCH_REPOS slugs
+        env:
+          WATCH_REPOS_VERIFY_TOKEN: ${{ secrets.WATCH_REPOS_VERIFY_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/verify_watch_repos.py
 
       # Posts the last 250 log lines of any failed step in this run as a sticky
       # PR comment so Claude sessions (which can't reach Actions logs from inside
@@ -41,8 +46,6 @@ jobs:
               repo: context.repo.repo,
               run_id: context.runId,
             });
-            // The currently-running job (this one) won't have conclusion set
-            // yet, so match either job-level failure OR any failed step.
             const failedJobs = jobsResp.jobs.filter(j =>
               j.conclusion === 'failure' ||
               (j.steps || []).some(s => s.conclusion === 'failure')
@@ -66,7 +69,6 @@ jobs:
                   ? res.data
                   : Buffer.from(res.data).toString('utf-8');
                 const tail = text.split('\n').slice(-250).join('\n');
-                // ~~~ fence avoids backtick collisions inside log lines.
                 body += `<details><summary>Last 250 log lines</summary>\n\n~~~\n${tail}\n~~~\n</details>\n\n`;
               } catch (e) {
                 body += `_could not fetch log: ${e.message}_\n\n`;
