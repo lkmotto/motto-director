@@ -58,9 +58,20 @@ def _gh_headers() -> dict[str, str]:
     }
 
 
+def _claude_oauth_token() -> str:
+    """Canonical secret is CLAUDE_CODE_OAUTH_TOKEN (Doppler motto-core/prd).
+
+    Falls back to legacy CLAUDE_CODE_SESSION_TOKEN for backward compat
+    until every deploy target has been repointed at motto-core/prd.
+    """
+    return os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") or os.environ.get(
+        "CLAUDE_CODE_SESSION_TOKEN", ""
+    )
+
+
 def _claude_session_headers() -> dict[str, str]:
     return {
-        "Authorization": f"Bearer {os.environ.get('CLAUDE_CODE_SESSION_TOKEN', '')}",
+        "Authorization": f"Bearer {_claude_oauth_token()}",
         "Content-Type": "application/json",
     }
 
@@ -92,12 +103,12 @@ def _file_issue(client: httpx.Client, move: NextMove) -> ActResult:
 
 
 def _spawn_session(client: httpx.Client, move: NextMove) -> ActResult:
-    if not os.environ.get("CLAUDE_CODE_SESSION_TOKEN"):
-        _log("spawn_session.skipped", reason="no_session_token", repo=move.repo)
+    if not _claude_oauth_token():
+        _log("spawn_session.skipped", reason="no_oauth_token", repo=move.repo)
         return ActResult(
             move=move,
             status="skipped",
-            detail="no CLAUDE_CODE_SESSION_TOKEN; spawn_session is optional",
+            detail="no CLAUDE_CODE_OAUTH_TOKEN; spawn_session is optional",
         )
     if not move.prompt_for_claude_code:
         return ActResult(
