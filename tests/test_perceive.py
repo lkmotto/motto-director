@@ -252,3 +252,45 @@ def test_perceive_skips_404_repo_and_keeps_good_one(capsys):
     assert skipped[0]["status_code"] == 404
     watch = [e for e in events if e["event"] == "perceive.watch_repos"]
     assert watch and watch[0]["repos"] == list(repos)
+
+
+@respx.mock
+def test_perceive_skips_northflank_when_api_key_missing(monkeypatch, capsys):
+    """With no NORTHFLANK_API_KEY/TOKEN set, perceive must NOT call the
+    Northflank API (an empty Bearer header crashes httpx) — it should log a
+    skip event and return a null pipeline status."""
+    monkeypatch.delenv("NORTHFLANK_API_KEY", raising=False)
+    monkeypatch.delenv("NORTHFLANK_API_TOKEN", raising=False)
+
+    repos = ("lkmotto/motto-social-agent",)
+    respx.get("https://api.github.com/repos/lkmotto/motto-social-agent").mock(
+        return_value=httpx.Response(200, json={"default_branch": "main"})
+    )
+    respx.get(
+        "https://api.github.com/repos/lkmotto/motto-social-agent/branches/main"
+    ).mock(
+        return_value=httpx.Response(
+            200,
+            json={"commit": {"commit": {"committer": {"date": _iso(1.0)}}}},
+        )
+    )
+    respx.get(
+        "https://api.github.com/repos/lkmotto/motto-social-agent/pulls"
+    ).mock(return_value=httpx.Response(200, json=[]))
+    respx.get(
+        "https://api.github.com/repos/lkmotto/motto-social-agent/issues"
+    ).mock(return_value=httpx.Response(200, json=[]))
+    # No respx mock for the Northflank URL — if the guard regresses, respx
+    # would raise on the unmocked call and this test would fail.
+
+    snapshot = perceive(repos=repos)
+
+    assert snapshot.pipeline_auto_nudge is not None
+    assert snapshot.pipeline_auto_nudge.last_run_status is None
+    assert snapshot.pipeline_auto_nudge.last_run_at is None
+
+    log_lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+    events = [json.loads(ln) for ln in log_lines]
+    skipped = [e for e in events if e["event"] == "perceive.northflank_skipped"]
+    assert len(skipped) == 1
+    assert skipped[0]["reason"] == "no_api_key"

@@ -271,11 +271,26 @@ def _fetch_default_branch_head(
 def _fetch_northflank_job(
     client: httpx.Client, project: str, job: str
 ) -> NorthflankJobStatus:
-    r = client.get(
-        f"{NORTHFLANK_API}/projects/{project}/jobs/{job}/runs",
-        params={"per_page": 1},
-        headers=_nf_headers(),
-    )
+    # Skip gracefully when the Northflank credential isn't provisioned.
+    # An empty Bearer header crashes httpx with LocalProtocolError, which
+    # would abort an entire director cycle. Logging + null status keeps
+    # perceive() usable in dev/test/CI and on fresh deploys.
+    if not northflank_api_key():
+        _log("perceive.northflank_skipped", reason="no_api_key", job=job)
+        return NorthflankJobStatus(job=job, last_run_at=None, last_run_status=None)
+    try:
+        r = client.get(
+            f"{NORTHFLANK_API}/projects/{project}/jobs/{job}/runs",
+            params={"per_page": 1},
+            headers=_nf_headers(),
+        )
+    except httpx.RequestError as exc:
+        _log(
+            "perceive.northflank_skipped",
+            reason=f"{type(exc).__name__}: {exc}",
+            job=job,
+        )
+        return NorthflankJobStatus(job=job, last_run_at=None, last_run_status=None)
     if r.status_code != 200:
         return NorthflankJobStatus(job=job, last_run_at=None, last_run_status=None)
     runs = r.json().get("data", {}).get("runs", []) or r.json().get("runs", [])
