@@ -39,6 +39,7 @@ observability = [
 
 [project.scripts]
 motto-director = "director.main:run"
+motto-director-digest = "director.digest:run_digest"
 
 [build-system]
 requires = ["hatchling"]

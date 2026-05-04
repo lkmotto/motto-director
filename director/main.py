@@ -14,7 +14,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 
 from director import fleet, policy
-from director.act import act
+from director.act import act, fleet_run_id_var
 from director.concurrency import adaptive_session_limit
 from director.ideate import ideate
 from director.observability import event, init_observability, register, track_run
@@ -144,6 +144,10 @@ async def _run_async() -> int:
         async with track_run(
             "perceive_ideate_act_cycle", intent="auto-nudge"
         ) as fleet_run:
+            # Make the fleet run id available to act() helpers so I/O
+            # capture (artifacts + decisions) attaches to the right row.
+            # When MCP is unreachable run_id is None and capture no-ops.
+            fleet_run_id_var.set(fleet_run.run_id)
             # Read the fleet's runtime state BEFORE perceiving our own GitHub
             # view — this is the new "director knows what the other agents
             # have been up to" feed. Returns [] when motto-mcp-server isn't

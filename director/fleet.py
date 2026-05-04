@@ -103,6 +103,110 @@ async def signal_intent(
         return None
 
 
+async def list_runs(
+    *,
+    agent_name: str | None = None,
+    status: str | None = None,
+    since_minutes: int = 60 * 24,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """List recent fleet runs via the new MCP tool. [] when MCP isn't reachable."""
+    if not _mcp_enabled():
+        return []
+    try:
+        async with _mcp_client() as c:
+            resp = await c.call_tool(
+                "list_runs",
+                {
+                    "agent_name": agent_name,
+                    "status": status,
+                    "since_minutes": since_minutes,
+                    "limit": limit,
+                },
+            )
+            return getattr(resp, "data", []) or []
+    except Exception as e:
+        logger.warning("list_runs failed: %s", e)
+        return []
+
+
+async def record_artifact(
+    *,
+    run_id: str | None,
+    kind: str,
+    ref: str | None,
+    meta: dict[str, Any] | None = None,
+) -> str | None:
+    """Persist an artifact reference + meta against a run.
+
+    No dedicated MCP tool yet — piggy-backs on `record_event` with
+    kind='artifact_added' and the artifact fields in payload. The Neon
+    `artifacts` table already has a `meta` JSONB column, so a future
+    migration can backfill this from events.
+    """
+    if not _mcp_enabled():
+        return None
+    try:
+        async with _mcp_client() as c:
+            resp = await c.call_tool(
+                "record_event",
+                {
+                    "agent_name": "motto-director",
+                    "kind": "artifact_added",
+                    "payload": {
+                        "artifact_kind": kind,
+                        "ref": ref,
+                        "meta": meta or {},
+                    },
+                    "run_id": run_id,
+                    "level": "info",
+                },
+            )
+            data = getattr(resp, "data", None)
+            return str(data.get("event_id")) if isinstance(data, dict) else None
+    except Exception as e:
+        logger.warning("record_artifact failed: %s", e)
+        return None
+
+
+async def record_decision(
+    *,
+    run_id: str | None,
+    choice: str,
+    rationale: str,
+    evidence: dict[str, Any] | None = None,
+) -> str | None:
+    """Persist a director decision (audit trail) via record_event.
+
+    Same piggy-back as record_artifact — the dedicated decisions tool is
+    deferred. choice/rationale/evidence land in the event payload so the
+    digest + replay tools can fan them back out.
+    """
+    if not _mcp_enabled():
+        return None
+    try:
+        async with _mcp_client() as c:
+            resp = await c.call_tool(
+                "record_event",
+                {
+                    "agent_name": "motto-director",
+                    "kind": "decision",
+                    "payload": {
+                        "choice": choice,
+                        "rationale": rationale,
+                        "evidence": evidence or {},
+                    },
+                    "run_id": run_id,
+                    "level": "info",
+                },
+            )
+            data = getattr(resp, "data", None)
+            return str(data.get("event_id")) if isinstance(data, dict) else None
+    except Exception as e:
+        logger.warning("record_decision failed: %s", e)
+        return None
+
+
 async def langfuse_recent_traces(
     *,
     since_minutes: int = 60,
