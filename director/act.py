@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 
 import httpx
 
+from director import policy
 from director.compound import (
     CodeChange,
     CompoundEntry,
@@ -28,7 +29,7 @@ from director.compound import (
     update_pr_body,
 )
 from director.ideate import NextMove
-from director.perceive import PullRequest, Snapshot, northflank_api_key
+from director.perceive import Issue, PullRequest, Snapshot, northflank_api_key
 
 GITHUB_API = "https://api.github.com"
 CLAUDE_CODE_SESSIONS_URL = "https://claude.ai/api/sessions"
@@ -86,6 +87,16 @@ def _find_pr(snapshot: Snapshot, repo: str, title: str) -> PullRequest | None:
     return None
 
 
+def _find_issue(snapshot: Snapshot, repo: str, title: str) -> Issue | None:
+    for state in snapshot.repos:
+        if state.repo != repo:
+            continue
+        for issue in state.open_issues:
+            if issue.title == title or str(issue.number) in title:
+                return issue
+    return None
+
+
 def _file_issue(client: httpx.Client, move: NextMove) -> ActResult:
     body = (
         f"**Intent:** {move.intent}\n\n"
@@ -102,7 +113,24 @@ def _file_issue(client: httpx.Client, move: NextMove) -> ActResult:
     return ActResult(move=move, status="executed", detail=r.json().get("html_url", ""))
 
 
-def _spawn_session(client: httpx.Client, move: NextMove) -> ActResult:
+def _spawn_session(
+    client: httpx.Client, move: NextMove, snapshot: Snapshot
+) -> ActResult:
+    # Policy gate runs before we burn a session — this is the bandwidth saver.
+    target = _find_issue(snapshot, move.repo, move.title) or _find_pr(
+        snapshot, move.repo, move.title
+    )
+    if target is not None:
+        eligible, reason = policy.is_eligible_for_spawn(target)
+        if not eligible:
+            return ActResult(move=move, status="skipped", detail=f"policy: {reason}")
+    size = policy.estimate_session_diff_size(move.prompt_for_claude_code)
+    if size > policy.MAX_FILES_PER_SESSION:
+        return ActResult(
+            move=move,
+            status="skipped",
+            detail=f"policy: prompt scope estimate {size} > {policy.MAX_FILES_PER_SESSION}",
+        )
     if not _claude_oauth_token():
         _log("spawn_session.skipped", reason="no_oauth_token", repo=move.repo)
         return ActResult(
@@ -141,18 +169,18 @@ def _merge_pr(
         return ActResult(
             move=move, status="skipped", detail="PR not found in snapshot"
         )
-    if pr.ci_status != "success":
-        return ActResult(
-            move=move, status="skipped", detail=f"CI is {pr.ci_status}"
+    eligible, reason = policy.is_eligible_for_auto_merge(pr, pr.ci_status)
+    if not eligible:
+        # Allow the legacy `auto-merge-ok` label as a temporary backstop
+        # while we migrate review gates over to `director-ok`. Self-mod
+        # and CI failures are NOT bypassable by either label.
+        legacy_ok = (
+            pr.ci_status == "success"
+            and pr.approvals >= 1
+            and AUTO_MERGE_LABEL in pr.labels
         )
-    if pr.approvals < 1:
-        return ActResult(move=move, status="skipped", detail="no approvals")
-    if AUTO_MERGE_LABEL not in pr.labels:
-        return ActResult(
-            move=move,
-            status="skipped",
-            detail=f"missing '{AUTO_MERGE_LABEL}' label",
-        )
+        if not legacy_ok:
+            return ActResult(move=move, status="skipped", detail=f"policy: {reason}")
     r = client.put(
         f"{GITHUB_API}/repos/{move.repo}/pulls/{pr.number}/merge",
         headers=_gh_headers(),
@@ -297,7 +325,7 @@ def act(
                 if move.kind == "file_issue":
                     results.append(_file_issue(client, move))
                 elif move.kind == "spawn_session":
-                    results.append(_spawn_session(client, move))
+                    results.append(_spawn_session(client, move, snapshot))
                 elif move.kind == "merge_pr":
                     results.append(_merge_pr(client, move, snapshot))
                 elif move.kind == "nudge_pipeline":
