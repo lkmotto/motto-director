@@ -15,12 +15,18 @@ NORTHFLANK_API = "https://api.northflank.com/v1"
 
 # Verified-real slugs under lkmotto (confirmed via GitHub org search). Override
 # at deploy time by setting WATCH_REPOS to a comma-separated list.
+#
+# motto-conductor was the previous orchestrator, superseded by motto-director
+# itself; it's slated for archival per the consolidation sweep, so it's no
+# longer in the default watch list. Re-add it via WATCH_REPOS if you need to
+# touch it during the archive process.
 DEFAULT_WATCH_REPOS: tuple[str, ...] = (
-    "lkmotto/motto-conductor",
     "lkmotto/motto-social-agent",
     "lkmotto/motto-sdr-agent",
     "lkmotto/motto-appraisal-pipeline",
     "lkmotto/motto-appraisal-cockpit",
+    "lkmotto/motto-mcp-server",
+    "lkmotto/motto-director",
 )
 
 
