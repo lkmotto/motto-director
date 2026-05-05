@@ -261,7 +261,17 @@ def _call_claude_max(system: str, user_msg: str) -> _ProviderResult:
         model,
         "--append-system-prompt",
         system,
+        # Northflank containers run as root. The Claude Code CLI refuses to
+        # operate non-interactively under root unless this flag is set
+        # (see anthropics/claude-code#3490, #2951, #9184). Safe here because
+        # `--max-turns 1` means the model returns a single JSON response and
+        # never invokes a tool — there are no permission prompts to bypass.
+        "--dangerously-skip-permissions",
     ]
+    # Companion to --dangerously-skip-permissions: the CLI also requires
+    # IS_SANDBOX=1 in env to confirm the operator understands they are
+    # running in a sandbox-like environment (root container, ephemeral fs).
+    sub_env = {**os.environ, "IS_SANDBOX": "1"}
     try:
         result = subprocess.run(  # noqa: S603
             cmd,
@@ -269,6 +279,7 @@ def _call_claude_max(system: str, user_msg: str) -> _ProviderResult:
             text=True,
             timeout=CLAUDE_MAX_TIMEOUT_S,
             check=False,
+            env=sub_env,
             # The Claude Code CLI inspects stdin even when `-p <text>` provides
             # the prompt: if stdin is open it will pause for ~3s waiting for
             # piped input, then warn and fall through. In a Northflank cron

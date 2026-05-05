@@ -451,6 +451,14 @@ def test_call_claude_max_subprocess_success(monkeypatch):
     # DEVNULL is the documented fix.
     import subprocess as _sp  # noqa: PLC0415
     assert captured_kwargs.get("stdin") == _sp.DEVNULL
+    # Regression for prod failure observed 2026-05-05 23:10 UTC: Northflank
+    # containers run as root, and the Claude Code CLI refuses non-interactive
+    # mode under root unless --dangerously-skip-permissions is passed AND
+    # IS_SANDBOX=1 is set in the env. See anthropics/claude-code#3490, #2951,
+    # #9184. Safe under --max-turns 1 because no tool calls happen.
+    assert "--dangerously-skip-permissions" in captured_cmd
+    sub_env = captured_kwargs.get("env") or {}
+    assert sub_env.get("IS_SANDBOX") == "1"
 
 
 def test_call_claude_max_subprocess_nonzero_exit(monkeypatch):
