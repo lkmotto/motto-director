@@ -39,22 +39,34 @@ def _neon_dsn() -> str | None:
     return os.environ.get("NEON_DATABASE_URL") or os.environ.get("DATABASE_URL")
 
 
+# A 64-bit signed integer derived from CYCLE_LOCK_RESOURCE, used as the
+# Postgres advisory-lock key. Stable across processes, fits int8.
+CYCLE_LOCK_KEY = int.from_bytes(
+    __import__("hashlib").sha256(CYCLE_LOCK_RESOURCE.encode()).digest()[:8],
+    "big",
+    signed=True,
+)
+
+
 def _try_acquire_cycle_lock(holder: str) -> bool:
-    """Best-effort fleet lock against the Neon `fleet.locks` control-plane
-    table provisioned by motto-mcp-server. No-ops + returns True when Neon
-    isn't configured so the legacy single-cron behavior is preserved.
+    """Best-effort cycle lock via Postgres session-scoped advisory lock.
 
-    Schema (owned by mcp_server.db.apply_migrations):
-        fleet.locks(resource TEXT PRIMARY KEY, holder_run UUID,
-                    acquired_at TIMESTAMPTZ, expires_at TIMESTAMPTZ)
+    Why advisory and not the fleet.locks table:
+      - fleet.locks.holder_run has a FK to fleet.runs(id). The cycle lock is
+        acquired BEFORE the fleet run is opened (we need the lock to decide
+        whether to even open one), so we'd insert with holder_run=NULL and
+        lose ownership semantics.
+      - Advisory locks are exactly what Postgres provides for this: a
+        named mutex, auto-released on session close (so a crashed run
+        can't deadlock the next cycle), zero schema impact.
 
-    `holder_run` is a fleet-wide run id (uuid). When called from the cycle
-    entrypoint we don't yet have a track_run uuid, so we synthesize a
-    deterministic uuid from `holder` (a uuid4().hex[:12] in main.run) so the
-    column types match. The `holder` parameter is mapped to a uuid via
-    uuid5(NAMESPACE_OID, holder) — collision-resistant for our cardinality
-    and stable across acquire/release within a single cycle.
+    Returns True when Neon isn't configured / psycopg isn't installed —
+    preserving the legacy single-cron behavior.
+
+    `holder` is unused now (advisory locks are session-scoped, not
+    holder-tagged) but kept in the signature for caller stability.
     """
+    del holder  # unused
     dsn = _neon_dsn()
     if not dsn:
         return True
@@ -64,47 +76,52 @@ def _try_acquire_cycle_lock(holder: str) -> bool:
         logger.debug("psycopg not installed; skipping fleet lock")
         return True
 
-    holder_run = str(uuid.uuid5(uuid.NAMESPACE_OID, holder))
+    # autocommit so the advisory lock survives across the connection
+    # lifetime managed by _cycle_lock(); we explicitly release on exit.
     try:
-        with psycopg.connect(dsn, connect_timeout=5) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO fleet.locks (resource, holder_run, acquired_at, expires_at) "
-                    "VALUES (%s, %s, NOW(), NOW() + (%s || ' seconds')::interval) "
-                    "ON CONFLICT (resource) DO UPDATE "
-                    "SET holder_run = EXCLUDED.holder_run, "
-                    "    acquired_at = EXCLUDED.acquired_at, "
-                    "    expires_at = EXCLUDED.expires_at "
-                    "WHERE fleet.locks.expires_at < NOW() "
-                    "RETURNING holder_run",
-                    (CYCLE_LOCK_RESOURCE, holder_run, str(CYCLE_LOCK_TTL_SECONDS)),
-                )
-                row = cur.fetchone()
-            conn.commit()
-        if row is None:
-            return False
-        return str(row[0]) == holder_run
+        conn = psycopg.connect(dsn, connect_timeout=5, autocommit=True)
+    except Exception as e:
+        logger.warning("cycle lock connect failed (continuing): %s", e)
+        return True
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_try_advisory_lock(%s)", (CYCLE_LOCK_KEY,))
+            row = cur.fetchone()
+        if row and row[0]:
+            _CYCLE_LOCK_CONN["conn"] = conn  # stash for release
+            return True
+        # Couldn't acquire; close the conn (no lock to release).
+        conn.close()
+        return False
     except Exception as e:
         logger.warning("cycle lock acquire failed (continuing): %s", e)
+        try:
+            conn.close()
+        except Exception:
+            pass
         return True
 
 
+_CYCLE_LOCK_CONN: dict[str, object] = {}
+
+
 def _try_release_cycle_lock(holder: str) -> None:
-    dsn = _neon_dsn()
-    if not dsn:
+    del holder  # unused; advisory lock is session-scoped
+    conn = _CYCLE_LOCK_CONN.pop("conn", None)
+    if conn is None:
         return
-    holder_run = str(uuid.uuid5(uuid.NAMESPACE_OID, holder))
     try:
-        import psycopg
-        with psycopg.connect(dsn, connect_timeout=5) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "DELETE FROM fleet.locks WHERE resource = %s AND holder_run = %s",
-                    (CYCLE_LOCK_RESOURCE, holder_run),
-                )
-            conn.commit()
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_unlock(%s)", (CYCLE_LOCK_KEY,))
+            cur.fetchone()
     except Exception as e:
         logger.warning("cycle lock release failed: %s", e)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 @contextmanager
