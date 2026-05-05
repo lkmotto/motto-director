@@ -1,0 +1,161 @@
+name: auto-merge
+
+# Auto-merge PRs labeled `auto-merge-ok` once required CI is green.
+# Refuses to merge meta-PRs (titles containing `meta:` / `self-mod:` or
+# changes touching protected files); strips the label + posts a comment in
+# that case so a human reviewer takes over.
+#
+# pull_request_target is required so we run in the base-branch context with
+# the GITHUB_TOKEN's write permissions; we never check out the PR head.
+
+on:
+  pull_request_target:
+    types: [opened, labeled, reopened, synchronize, ready_for_review]
+  check_suite:
+    types: [completed]
+  workflow_run:
+    workflows: ["ci"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: auto-merge-${{ github.event.pull_request.number || github.event.check_suite.id || github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  guard-and-merge:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name != 'pull_request_target' ||
+      (github.event.pull_request.draft == false &&
+       github.event.pull_request.base.ref == 'main')
+    steps:
+      # Pinned to v4.2.2 (commit SHA, per security best practice).
+      - name: Checkout (workflow files only)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      # Pinned to v7.0.1.
+      - name: Resolve PR + guard
+        id: guard
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
+        with:
+          script: |
+            const PROTECTED_PATTERNS = [
+              /(^|\/)policy\.py$/,
+              /(^|\/)observability\.py$/,
+              /(^|\/)fleet\.py$/,
+              /(^|\/)perceive\.py$/,
+              /(^|\/)ideate\.py$/,
+              /(^|\/)act\.py$/,
+              /(^|\/)digest\.py$/,
+              /^\.github\/workflows\//,
+              /^scripts\/apply_northflank_crons\.py$/,
+            ];
+            const PROTECTED_TITLE_PREFIXES = ['meta:', 'self-mod:'];
+            const LABEL = 'auto-merge-ok';
+
+            // Resolve the PR number across the three event types.
+            let prNumber = null;
+            if (context.eventName === 'pull_request_target') {
+              prNumber = context.payload.pull_request.number;
+            } else if (context.eventName === 'check_suite') {
+              const prs = context.payload.check_suite.pull_requests || [];
+              if (prs.length === 1) prNumber = prs[0].number;
+            } else if (context.eventName === 'workflow_run') {
+              const prs = context.payload.workflow_run.pull_requests || [];
+              if (prs.length === 1) prNumber = prs[0].number;
+            }
+            if (!prNumber) {
+              core.info('No single PR resolvable from event; skipping.');
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+
+            if (pr.draft || pr.base.ref !== 'main' || pr.state !== 'open') {
+              core.info(`Skip: draft=${pr.draft} base=${pr.base.ref} state=${pr.state}`);
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            const labels = (pr.labels || []).map(l => l.name);
+            if (!labels.includes(LABEL)) {
+              core.info(`Skip: PR #${prNumber} missing '${LABEL}' label.`);
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            const title = (pr.title || '').toLowerCase();
+            const titleTripped = PROTECTED_TITLE_PREFIXES.some(p => title.includes(p));
+
+            // List changed files (paginated; PRs can have >100 files).
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              per_page: 100,
+            });
+            const filenames = files.map(f => f.filename);
+            const tripped = filenames.filter(
+              f => PROTECTED_PATTERNS.some(rx => rx.test(f))
+            );
+
+            if (titleTripped || tripped.length > 0) {
+              const reason = titleTripped
+                ? `title prefix \`${PROTECTED_TITLE_PREFIXES.find(p => title.includes(p))}\``
+                : `protected files touched: ${tripped.map(f => '`' + f + '`').join(', ')}`;
+              const body = [
+                '🛡️ **Auto-merge skipped: meta-PR safety guard tripped.**',
+                '',
+                `Reason: ${reason}`,
+                '',
+                'Per the doctrine in `CONTRIBUTING.md`, PRs touching protected files',
+                '(policy/observability/fleet/perceive/ideate/act/digest, workflows,',
+                'or `scripts/apply_northflank_crons.py`) — or with `meta:` / `self-mod:`',
+                'in the title — must be reviewed and merged by a human.',
+                '',
+                "I've removed the `auto-merge-ok` label so this PR doesn't re-trigger",
+                'the guard on every push.',
+              ].join('\n');
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body,
+              });
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  name: LABEL,
+                });
+              } catch (e) {
+                if (e.status !== 404) throw e;
+              }
+              core.setOutput('skip', 'true');
+              return;
+            }
+
+            core.setOutput('skip', 'false');
+            core.setOutput('pr_number', String(prNumber));
+
+      - name: Enable auto-merge
+        if: steps.guard.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.guard.outputs.pr_number }}
+        # `--auto` tells GitHub to merge once required checks pass + branch is
+        # mergeable; if checks are already green it merges immediately.
+        run: gh pr merge "$PR_NUMBER" --squash --delete-branch --auto --repo "$GITHUB_REPOSITORY"
