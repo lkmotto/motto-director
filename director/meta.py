@@ -278,7 +278,13 @@ async def synthesize_improvements(outcomes: dict[str, Any]) -> list[Improvement]
 
 
 def _any_llm_provider_configured() -> bool:
+    # Mirrors ideate._provider_chain: any one of these env vars is enough
+    # to configure at least one provider in the failover chain. Must include
+    # CLAUDE_CODE_OAUTH_TOKEN — after PR #24 it is the deployed primary
+    # provider, and omitting it caused the weekly meta cron to silently
+    # no-op whenever it was the only configured provider.
     keys = (
+        "CLAUDE_CODE_OAUTH_TOKEN",
         "ANTHROPIC_API_KEY",
         "DEEPSEEK_API_KEY",
         "GROQ_API_KEY",
