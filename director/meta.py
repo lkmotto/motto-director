@@ -76,7 +76,9 @@ def _log(event_name: str, **fields: object) -> None:
 
 def _gh_headers() -> dict[str, str]:
     return {
-        "Authorization": f"Bearer {os.environ.get('GITHUB_TOKEN') or os.environ.get('GITHUB_PAT', '')}",
+        "Authorization": (
+            f"Bearer {os.environ.get('GITHUB_TOKEN') or os.environ.get('GITHUB_PAT', '')}"
+        ),
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
