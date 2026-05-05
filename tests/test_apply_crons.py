@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 from unittest import mock
@@ -15,7 +14,6 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import apply_northflank_crons as anc  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # load_manifest
