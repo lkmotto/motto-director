@@ -39,11 +39,39 @@ jobs:
 
           echo "Triggering NF build for $PROJECT_ID/$JOB_ID @ $COMMIT_SHA"
 
+          # Step 1: start the build.
           resp=$(curl -fsS -X POST \
             -H "Authorization: Bearer $NORTHFLANK_API_KEY" \
             -H "Content-Type: application/json" \
             -d "{\"sha\":\"$COMMIT_SHA\"}" \
             "https://api.northflank.com/v1/projects/$PROJECT_ID/jobs/$JOB_ID/build")
 
-          echo "Build queued:"
+          BUILD_ID=$(echo "$resp" | jq -r '.data.id')
+          echo "Build queued: $BUILD_ID"
           echo "$resp" | jq '.data | {id, branch, status, sha, createdAt}'
+
+          # Step 2: poll until the build concludes (success or failure).
+          # Builds typically take 60-180s; we cap at 12 minutes.
+          for i in $(seq 1 72); do
+            sleep 10
+            status=$(curl -fsS -H "Authorization: Bearer $NORTHFLANK_API_KEY" \
+              "https://api.northflank.com/v1/projects/$PROJECT_ID/jobs/$JOB_ID/build/$BUILD_ID" \
+              | jq -r '.data.status')
+            echo "  poll $i: status=$status"
+            if [ "$status" = "SUCCESS" ]; then
+              break
+            fi
+            if [ "$status" = "FAILURE" ] || [ "$status" = "CRASHED" ] || [ "$status" = "ABORTED" ] || [ "$status" = "SUBMISSION_FAILURE" ]; then
+              echo "::error::Build $BUILD_ID concluded with status=$status"
+              exit 1
+            fi
+          done
+
+          # Step 3: deploy the built image. Without this, the running cron
+          # keeps using the old image.
+          curl -fsS -X POST \
+            -H "Authorization: Bearer $NORTHFLANK_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"internal\":{\"buildId\":\"$BUILD_ID\"}}" \
+            "https://api.northflank.com/v1/projects/$PROJECT_ID/jobs/$JOB_ID/deployment" >/dev/null
+          echo "Deploy issued for build $BUILD_ID."
