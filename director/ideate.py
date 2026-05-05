@@ -71,14 +71,27 @@ CHAIN_ORDER: tuple[str, ...] = (
 ANTHROPIC_MODEL_ENV = "DIRECTOR_ANTHROPIC_MODEL"
 ANTHROPIC_DEFAULT_MODEL = "claude-opus-4-7"
 
-# Claude Max OAuth (Claude Code) configuration.
-# The Anthropic /v1/messages endpoint accepts a Bearer OAuth token from a
-# Claude Pro/Max subscription when the request is identified as Claude Code
-# (system prompt prefix + oauth beta header). Usage bills against the
-# subscription, not API credits.
+# Claude Max via the official `claude` CLI binary (subprocess).
+#
+# As of Jan 9, 2026 Anthropic enforces server-side that subscription OAuth
+# tokens are usable only inside the official Claude Code client. Direct
+# /v1/messages calls with the OAuth token now return 403/429 even with the
+# Claude Code identity prefix and oauth beta header (formalized in docs
+# Feb 19, 2026: https://docs.anthropic.com/en/docs/claude-code/legal-and-compliance).
+#
+# The compliant way to use the Max subscription from a server is to install
+# the `claude` CLI in the container, set CLAUDE_CODE_OAUTH_TOKEN as the
+# long-lived headless-auth token (generated via `claude setup-token`), and
+# shell out with `claude -p`. The CLI is the authorized client; calling it
+# from a subprocess preserves subscription billing.
 CLAUDE_MAX_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 CLAUDE_MAX_MODEL_ENV = "DIRECTOR_CLAUDE_MAX_MODEL"
 CLAUDE_MAX_DEFAULT_MODEL = "claude-sonnet-4-5"
+CLAUDE_MAX_BIN_ENV = "CLAUDE_CLI_BIN"
+CLAUDE_MAX_DEFAULT_BIN = "claude"
+CLAUDE_MAX_TIMEOUT_S = 120  # CLI subprocess startup adds ~1-2s; pad generously
+# Retained for backward-compat with any callers/tests; no longer used for
+# transport. Kept so other modules importing these constants don't break.
 CLAUDE_MAX_BETA = "oauth-2025-04-20"
 CLAUDE_MAX_API_VERSION = "2023-06-01"
 CLAUDE_MAX_URL = "https://api.anthropic.com/v1/messages"
@@ -203,44 +216,78 @@ class _ProviderHTTPError(Exception):
 
 
 def _call_claude_max(system: str, user_msg: str) -> _ProviderResult:
-    """Call /v1/messages using the Claude Code OAuth token (Claude Max plan).
+    """Invoke the Claude Max subscription via the official `claude` CLI.
 
-    Two non-obvious requirements (reverse-engineered from Claude Code itself):
-      1. The system prompt MUST start with the literal CLAUDE_CODE_SYSTEM_PREFIX
-         string. The OAuth token is scoped to Claude Code; without the prefix
-         the API rejects with 'OAuth authentication is currently not supported'.
-      2. An `anthropic-beta: oauth-2025-04-20` header is required.
+    Why subprocess and not /v1/messages directly:
+        Anthropic blocks subscription OAuth tokens from the bare API as of
+        Jan 9, 2026 (formalized Feb 19, 2026). The CLI is the authorized
+        client; calling it from a subprocess is the supported path.
 
-    We prepend the prefix to whatever caller-supplied system prompt was passed,
-    so the director's existing SYSTEM_PROMPT keeps full effect.
+    Token plumbing:
+        CLAUDE_CODE_OAUTH_TOKEN must be set in the process env. The CLI
+        picks it up automatically; we don't pass it on the command line.
+
+    Output handling:
+        We invoke `claude -p <prompt> --output-format json --max-turns 1
+        --append-system-prompt <system>`. The CLI emits a single JSON object
+        with {result, total_cost_usd, num_turns, ...}. We do NOT use
+        --system-prompt because that overrides Claude Code's own system
+        prompt, which is exactly what kills subscription billing identity.
+        --append-system-prompt preserves it.
+
+    Failure modes mapped onto the chain's failover taxonomy:
+        - missing token / missing binary  → _ProviderUnavailable (try next provider)
+        - non-zero exit / timeout / parse → _ProviderHTTPError (treat as 502)
     """
-    import httpx  # noqa: PLC0415  -- httpx is already a transitive dep via anthropic
+    import shutil  # noqa: PLC0415
+    import subprocess  # noqa: PLC0415
 
-    token = os.environ.get(CLAUDE_MAX_TOKEN_ENV)
-    if not token:
+    if not os.environ.get(CLAUDE_MAX_TOKEN_ENV):
         raise _ProviderUnavailable(f"{CLAUDE_MAX_TOKEN_ENV} not set")
+    bin_path = os.environ.get(CLAUDE_MAX_BIN_ENV, CLAUDE_MAX_DEFAULT_BIN)
+    if shutil.which(bin_path) is None:
+        raise _ProviderUnavailable(f"`{bin_path}` CLI not on PATH")
+
     model = os.environ.get(CLAUDE_MAX_MODEL_ENV, CLAUDE_MAX_DEFAULT_MODEL)
-    full_system = f"{CLAUDE_CODE_SYSTEM_PREFIX}\n\n{system}"
-    payload = {
-        "model": model,
-        "max_tokens": 4096,
-        "system": full_system,
-        "messages": [{"role": "user", "content": user_msg}],
-    }
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "anthropic-version": CLAUDE_MAX_API_VERSION,
-        "anthropic-beta": CLAUDE_MAX_BETA,
-        "content-type": "application/json",
-    }
-    response = httpx.post(CLAUDE_MAX_URL, json=payload, headers=headers, timeout=60)
-    if response.status_code >= 400:
-        # Surface to the failover layer with the real status code.
-        raise _ProviderHTTPError(response.status_code, response.text[:500])
-    body = response.json()
-    text = "".join(
-        b.get("text", "") for b in body.get("content", []) if b.get("type") == "text"
-    )
+    cmd = [
+        bin_path,
+        "-p",
+        user_msg,
+        "--output-format",
+        "json",
+        "--max-turns",
+        "1",
+        "--model",
+        model,
+        "--append-system-prompt",
+        system,
+    ]
+    try:
+        result = subprocess.run(  # noqa: S603
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=CLAUDE_MAX_TIMEOUT_S,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise _ProviderHTTPError(504, f"claude CLI timeout after {CLAUDE_MAX_TIMEOUT_S}s") from exc
+    except FileNotFoundError as exc:  # pragma: no cover -- shutil.which guards this
+        raise _ProviderUnavailable(f"claude CLI vanished mid-run: {exc}") from exc
+
+    if result.returncode != 0:
+        # Trim stderr; CLI tracebacks can be huge.
+        raise _ProviderHTTPError(
+            502, f"claude CLI exit={result.returncode}: {result.stderr[:500]}"
+        )
+    try:
+        body = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise _ProviderHTTPError(
+            502, f"claude CLI bad JSON: {result.stdout[:300]}"
+        ) from exc
+
+    text = body.get("result") or ""
     usage = body.get("usage") or {}
     return _ProviderResult(
         text=text,
