@@ -493,6 +493,35 @@ def test_call_claude_max_subprocess_bad_json(monkeypatch):
         raise AssertionError("expected _ProviderHTTPError")
 
 
+def test_call_claude_max_subprocess_advisory_exit(monkeypatch):
+    """Regression for prod failure observed 2026-05-05 23:21 UTC, run bb3bfb94:
+    the CLI sometimes exits non-zero AFTER successfully producing a complete
+    JSON body on stdout (telemetry shows `terminal_reason=completed`,
+    `permission_denials=[]`). Treat the body as authoritative and the exit
+    code as advisory."""
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "fake-tok")
+    monkeypatch.setattr("shutil.which", lambda _: "/usr/local/bin/claude")
+
+    cli_payload = json.dumps(
+        {
+            "result": '{"moves": [{"intent": "do-the-thing"}]}',
+            "model": "claude-sonnet-4-5",
+            "usage": {"input_tokens": 50, "output_tokens": 10},
+            "terminal_reason": "completed",
+            "permission_denials": [],
+        }
+    )
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *_a, **_k: SimpleNamespace(returncode=1, stdout=cli_payload, stderr=""),
+    )
+
+    result = ideate_mod._call_claude_max("sys", "user")
+    # Exit code was 1 but body parsed cleanly — we should NOT raise.
+    assert result.text == '{"moves": [{"intent": "do-the-thing"}]}'
+    assert result.tokens_in == 50
+
+
 def test_call_claude_max_subprocess_timeout(monkeypatch):
     import subprocess  # noqa: PLC0415
 

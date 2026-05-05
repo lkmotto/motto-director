@@ -293,27 +293,47 @@ def _call_claude_max(system: str, user_msg: str) -> _ProviderResult:
     except FileNotFoundError as exc:  # pragma: no cover -- shutil.which guards this
         raise _ProviderUnavailable(f"claude CLI vanished mid-run: {exc}") from exc
 
-    if result.returncode != 0:
-        # Trim stderr; CLI tracebacks can be huge. Include stdout tail too
-        # because some CLI errors (auth, network) print to stdout, not stderr.
-        err_tail = (result.stderr or "").strip()[-400:]
-        out_tail = (result.stdout or "").strip()[-200:]
-        raise _ProviderHTTPError(
-            502,
-            f"claude CLI exit={result.returncode} stderr={err_tail!r} stdout={out_tail!r}",
-        )
-    try:
-        body = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise _ProviderHTTPError(
-            502, f"claude CLI bad JSON: {result.stdout[:300]}"
-        ) from exc
+    # The CLI sometimes emits a fully-formed JSON result on stdout AND exits
+    # non-zero (observed under root containers + IS_SANDBOX=1). When that
+    # happens, prefer parsing stdout over treating the exit code as fatal.
+    stdout_text = (result.stdout or "").strip()
+    parsed_body: dict | None = None
+    if stdout_text:
+        try:
+            parsed_body = json.loads(stdout_text)
+        except json.JSONDecodeError:
+            parsed_body = None
 
-    text = body.get("result") or ""
-    usage = body.get("usage") or {}
+    if result.returncode != 0:
+        # If we got a parseable body with a `result` field, treat the exit
+        # code as advisory (the run actually produced output). Log it for
+        # observability but don't fail the provider.
+        if parsed_body and isinstance(parsed_body, dict) and parsed_body.get("result"):
+            _log(
+                "claude_max.advisory_exit",
+                exit_code=result.returncode,
+                terminal_reason=parsed_body.get("terminal_reason"),
+                permission_denials=len(parsed_body.get("permission_denials") or []),
+            )
+        else:
+            err_tail = (result.stderr or "").strip()[-400:]
+            out_head = stdout_text[:600]
+            out_tail = stdout_text[-600:]
+            raise _ProviderHTTPError(
+                502,
+                f"claude CLI exit={result.returncode} stderr={err_tail!r} stdout_head={out_head!r} stdout_tail={out_tail!r}",
+            )
+
+    if parsed_body is None:
+        raise _ProviderHTTPError(
+            502, f"claude CLI bad JSON: {stdout_text[:600]}"
+        )
+
+    text = parsed_body.get("result") or ""
+    usage = parsed_body.get("usage") or {}
     return _ProviderResult(
         text=text,
-        model=body.get("model", model),
+        model=parsed_body.get("model", model),
         tokens_in=usage.get("input_tokens", 0),
         tokens_out=usage.get("output_tokens", 0),
     )
