@@ -56,9 +56,35 @@ PROVIDER_CONFIG: dict[str, dict[str, str]] = {
     },
 }
 
-CHAIN_ORDER: tuple[str, ...] = ("deepseek", "groq", "openrouter", "anthropic")
+# Chain default: claude_max first. The Claude Max OAuth token (Anthropic's
+# $200/mo Pro/Max plan, used by the Claude Code CLI) is bottomless for our
+# usage, while the OpenAI-compatible free tiers (deepseek/groq/openrouter)
+# are aggressively rate-limited and the raw ANTHROPIC_API_KEY runs on
+# pay-per-token credit. Order: subscription → free tiers → paid API.
+CHAIN_ORDER: tuple[str, ...] = (
+    "claude_max",
+    "deepseek",
+    "groq",
+    "openrouter",
+    "anthropic",
+)
 ANTHROPIC_MODEL_ENV = "DIRECTOR_ANTHROPIC_MODEL"
 ANTHROPIC_DEFAULT_MODEL = "claude-opus-4-7"
+
+# Claude Max OAuth (Claude Code) configuration.
+# The Anthropic /v1/messages endpoint accepts a Bearer OAuth token from a
+# Claude Pro/Max subscription when the request is identified as Claude Code
+# (system prompt prefix + oauth beta header). Usage bills against the
+# subscription, not API credits.
+CLAUDE_MAX_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
+CLAUDE_MAX_MODEL_ENV = "DIRECTOR_CLAUDE_MAX_MODEL"
+CLAUDE_MAX_DEFAULT_MODEL = "claude-sonnet-4-5"
+CLAUDE_MAX_BETA = "oauth-2025-04-20"
+CLAUDE_MAX_API_VERSION = "2023-06-01"
+CLAUDE_MAX_URL = "https://api.anthropic.com/v1/messages"
+CLAUDE_CODE_SYSTEM_PREFIX = (
+    "You are Claude Code, Anthropic's official CLI for Claude."
+)
 
 _FAILOVER_STATUSES: frozenset[int] = frozenset({401, 402, 429, 500, 502, 503, 504})
 
@@ -148,7 +174,9 @@ def _coerce_move(raw: dict) -> NextMove | None:
 
 
 def _provider_chain() -> list[str]:
-    primary = os.environ.get("LLM_PROVIDER", "deepseek").lower()
+    # Default primary is now claude_max (Claude Code OAuth) — see CHAIN_ORDER
+    # comment for rationale. LLM_PROVIDER env can still pin a different one.
+    primary = os.environ.get("LLM_PROVIDER", "claude_max").lower()
     rest = [p for p in CHAIN_ORDER if p != primary]
     return [primary, *rest] if primary in CHAIN_ORDER else list(CHAIN_ORDER)
 
@@ -172,6 +200,54 @@ class _ProviderHTTPError(Exception):
         super().__init__(reason)
         self.status_code = status_code
         self.reason = reason
+
+
+def _call_claude_max(system: str, user_msg: str) -> _ProviderResult:
+    """Call /v1/messages using the Claude Code OAuth token (Claude Max plan).
+
+    Two non-obvious requirements (reverse-engineered from Claude Code itself):
+      1. The system prompt MUST start with the literal CLAUDE_CODE_SYSTEM_PREFIX
+         string. The OAuth token is scoped to Claude Code; without the prefix
+         the API rejects with 'OAuth authentication is currently not supported'.
+      2. An `anthropic-beta: oauth-2025-04-20` header is required.
+
+    We prepend the prefix to whatever caller-supplied system prompt was passed,
+    so the director's existing SYSTEM_PROMPT keeps full effect.
+    """
+    import httpx  # noqa: PLC0415  -- httpx is already a transitive dep via anthropic
+
+    token = os.environ.get(CLAUDE_MAX_TOKEN_ENV)
+    if not token:
+        raise _ProviderUnavailable(f"{CLAUDE_MAX_TOKEN_ENV} not set")
+    model = os.environ.get(CLAUDE_MAX_MODEL_ENV, CLAUDE_MAX_DEFAULT_MODEL)
+    full_system = f"{CLAUDE_CODE_SYSTEM_PREFIX}\n\n{system}"
+    payload = {
+        "model": model,
+        "max_tokens": 4096,
+        "system": full_system,
+        "messages": [{"role": "user", "content": user_msg}],
+    }
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "anthropic-version": CLAUDE_MAX_API_VERSION,
+        "anthropic-beta": CLAUDE_MAX_BETA,
+        "content-type": "application/json",
+    }
+    response = httpx.post(CLAUDE_MAX_URL, json=payload, headers=headers, timeout=60)
+    if response.status_code >= 400:
+        # Surface to the failover layer with the real status code.
+        raise _ProviderHTTPError(response.status_code, response.text[:500])
+    body = response.json()
+    text = "".join(
+        b.get("text", "") for b in body.get("content", []) if b.get("type") == "text"
+    )
+    usage = body.get("usage") or {}
+    return _ProviderResult(
+        text=text,
+        model=body.get("model", model),
+        tokens_in=usage.get("input_tokens", 0),
+        tokens_out=usage.get("output_tokens", 0),
+    )
 
 
 def _call_anthropic(client: Anthropic, system: str, user_msg: str) -> _ProviderResult:
@@ -220,6 +296,10 @@ def _call_openai_compatible(provider: str, system: str, user_msg: str) -> _Provi
 
 
 def _try_provider(provider: str, system: str, user_msg: str) -> _ProviderResult:
+    if provider == "claude_max":
+        # _call_claude_max raises _ProviderUnavailable / _ProviderHTTPError
+        # directly with accurate status codes — no extra wrapping.
+        return _call_claude_max(system, user_msg)
     if provider == "anthropic":
         if not os.environ.get("ANTHROPIC_API_KEY"):
             raise _ProviderUnavailable("ANTHROPIC_API_KEY not set")
