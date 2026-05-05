@@ -1,0 +1,49 @@
+name: deploy-northflank
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Durable redeploy path. The Northflank-side VCS auto-rebuild integration
+# on this project has been unreliable (proven 2026-05-05: PRs #26 #27 #28
+# all merged without triggering rebuilds, image stayed pinned to the
+# April 27 SHA). Owning the trigger from GitHub Actions makes the deploy
+# contract explicit and survives any NF-side webhook drift.
+#
+# Endpoint: POST /v1/projects/{project}/jobs/{job}/build  body {"sha": "<40-char>"}
+# Docs: https://northflank.com/docs/v1/api/project/jobs/start-job-build
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: nf-deploy-motto-director
+      cancel-in-progress: false
+    steps:
+      - name: Trigger Northflank build
+        env:
+          NORTHFLANK_API_KEY: ${{ secrets.NORTHFLANK_API_KEY || secrets.NORTHFLANK_API }}
+          PROJECT_ID: motto-agents
+          JOB_ID: motto-director
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "$NORTHFLANK_API_KEY" ]; then
+            echo "::error::NORTHFLANK_API_KEY (or NORTHFLANK_API) not set on this repo"
+            exit 1
+          fi
+
+          echo "Triggering NF build for $PROJECT_ID/$JOB_ID @ $COMMIT_SHA"
+
+          resp=$(curl -fsS -X POST \
+            -H "Authorization: Bearer $NORTHFLANK_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"sha\":\"$COMMIT_SHA\"}" \
+            "https://api.northflank.com/v1/projects/$PROJECT_ID/jobs/$JOB_ID/build")
+
+          echo "Build queued:"
+          echo "$resp" | jq '.data | {id, branch, status, sha, createdAt}'
