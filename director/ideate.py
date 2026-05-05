@@ -321,7 +321,12 @@ def _call_claude_max(system: str, user_msg: str) -> _ProviderResult:
             out_tail = stdout_text[-600:]
             raise _ProviderHTTPError(
                 502,
-                f"claude CLI exit={result.returncode} stderr={err_tail!r} stdout_head={out_head!r} stdout_tail={out_tail!r}",
+                (
+                    f"claude CLI exit={result.returncode} "
+                    f"stderr={err_tail!r} "
+                    f"stdout_head={out_head!r} "
+                    f"stdout_tail={out_tail!r}"
+                ),
             )
 
     if parsed_body is None:
