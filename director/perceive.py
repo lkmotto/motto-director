@@ -27,6 +27,9 @@ DEFAULT_WATCH_REPOS: tuple[str, ...] = (
     "lkmotto/motto-appraisal-cockpit",
     "lkmotto/motto-mcp-server",
     "lkmotto/motto-director",
+    # Added 2026-05-05: highest-volume stuck-issue surface (24 open issues).
+    # First non-DRY_RUN target for director point-and-shoot.
+    "lkmotto/appraisalos-bidding",
 )
 
 

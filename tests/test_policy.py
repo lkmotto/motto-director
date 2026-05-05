@@ -262,3 +262,39 @@ def test_filter_moves_passes_through_file_issue():
     )
     kept = policy.filter_moves([move], _snapshot())
     assert kept == [move]
+
+
+def test_filter_moves_drops_disabled_kinds(monkeypatch):
+    """DIRECTOR_DISABLED_KINDS=merge_pr should block merges even if they
+    would otherwise be eligible. Used for first non-DRY_RUN tick safety."""
+    monkeypatch.setenv("DIRECTOR_DISABLED_KINDS", "merge_pr,spawn_session")
+    file_issue = NextMove(
+        repo=REPO,
+        kind="file_issue",
+        title="file me",
+        rationale="r",
+        prompt_for_claude_code="",
+        priority=3,
+        intent="i",
+    )
+    merge = NextMove(
+        repo=REPO,
+        kind="merge_pr",
+        title="merge me",
+        rationale="r",
+        prompt_for_claude_code="",
+        priority=3,
+        intent="i",
+    )
+    spawn = NextMove(
+        repo=REPO,
+        kind="spawn_session",
+        title="spawn me",
+        rationale="r",
+        prompt_for_claude_code="do thing",
+        priority=3,
+        intent="i",
+    )
+    kept = policy.filter_moves([file_issue, merge, spawn], _snapshot())
+    # merge_pr and spawn_session dropped by env gate; file_issue passes through.
+    assert [m.kind for m in kept] == ["file_issue"]

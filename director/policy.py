@@ -184,11 +184,37 @@ def _find_issue(snapshot: Snapshot, repo: str, title: str) -> Issue | None:
     return None
 
 
+def _disabled_kinds() -> set[str]:
+    """Return the set of move kinds disabled by env (operator override).
+
+    Set DIRECTOR_DISABLED_KINDS to a comma-separated list of MoveKind values
+    to drop them before policy evaluation. Useful when graduating from
+    DRY_RUN: e.g. DIRECTOR_DISABLED_KINDS=merge_pr,spawn_session lets the
+    director file issues + draft compound PRs but blocks merges and Claude
+    Code session spawns.
+    """
+    raw = os.environ.get("DIRECTOR_DISABLED_KINDS", "").strip()
+    if not raw:
+        return set()
+    return {p.strip() for p in raw.split(",") if p.strip()}
+
+
 def filter_moves(moves: list[NextMove], snapshot: Snapshot) -> list[NextMove]:
     """Apply scoping rules. Drop moves that fail eligibility; emit a
     `policy.decision` log line per drop with rationale."""
+    disabled = _disabled_kinds()
     kept: list[NextMove] = []
     for move in moves:
+        if move.kind in disabled:
+            _log(
+                "policy.decision",
+                kind=move.kind,
+                repo=move.repo,
+                title=move.title,
+                eligible=False,
+                reason="kind disabled by DIRECTOR_DISABLED_KINDS env",
+            )
+            continue
         eligible, reason = _evaluate(move, snapshot)
         if eligible:
             kept.append(move)
