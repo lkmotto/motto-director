@@ -31,6 +31,8 @@ jobs:
           WATCH_REPOS_VERIFY_TOKEN: ${{ secrets.WATCH_REPOS_VERIFY_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python scripts/verify_watch_repos.py
+      - name: Auto-merge guard self-test
+        run: bash .github/workflows/auto-merge-guard-test.sh
 
       # Posts the last 250 log lines of any failed step in this run as a sticky
       # PR comment so Claude sessions (which can't reach Actions logs from inside
