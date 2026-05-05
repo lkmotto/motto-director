@@ -420,9 +420,11 @@ def test_call_claude_max_subprocess_success(monkeypatch):
     )
 
     captured_cmd: list[str] = []
+    captured_kwargs: dict = {}
 
     def fake_run(cmd, **kwargs):  # noqa: ANN001, ANN003
         captured_cmd.extend(cmd)
+        captured_kwargs.update(kwargs)
         return SimpleNamespace(returncode=0, stdout=cli_payload, stderr="")
 
     monkeypatch.setattr("shutil.which", lambda _: "/usr/local/bin/claude")
@@ -443,6 +445,12 @@ def test_call_claude_max_subprocess_success(monkeypatch):
     # JSON output requested
     assert "--output-format" in captured_cmd
     assert captured_cmd[captured_cmd.index("--output-format") + 1] == "json"
+    # Regression for prod failure observed 2026-05-05 23:00 UTC: the CLI
+    # was reading inherited stdin in the Northflank cron environment, hitting
+    # the "no stdin data received in 3s" warning then exit=1. Pinning stdin to
+    # DEVNULL is the documented fix.
+    import subprocess as _sp  # noqa: PLC0415
+    assert captured_kwargs.get("stdin") == _sp.DEVNULL
 
 
 def test_call_claude_max_subprocess_nonzero_exit(monkeypatch):

@@ -269,6 +269,13 @@ def _call_claude_max(system: str, user_msg: str) -> _ProviderResult:
             text=True,
             timeout=CLAUDE_MAX_TIMEOUT_S,
             check=False,
+            # The Claude Code CLI inspects stdin even when `-p <text>` provides
+            # the prompt: if stdin is open it will pause for ~3s waiting for
+            # piped input, then warn and fall through. In a Northflank cron
+            # the inherited stdin is a closed/orphan TTY that confuses the CLI
+            # and causes a non-zero exit. Pin stdin to /dev/null so the CLI
+            # treats `-p` as the sole input source.
+            stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired as exc:
         raise _ProviderHTTPError(504, f"claude CLI timeout after {CLAUDE_MAX_TIMEOUT_S}s") from exc
@@ -276,9 +283,13 @@ def _call_claude_max(system: str, user_msg: str) -> _ProviderResult:
         raise _ProviderUnavailable(f"claude CLI vanished mid-run: {exc}") from exc
 
     if result.returncode != 0:
-        # Trim stderr; CLI tracebacks can be huge.
+        # Trim stderr; CLI tracebacks can be huge. Include stdout tail too
+        # because some CLI errors (auth, network) print to stdout, not stderr.
+        err_tail = (result.stderr or "").strip()[-400:]
+        out_tail = (result.stdout or "").strip()[-200:]
         raise _ProviderHTTPError(
-            502, f"claude CLI exit={result.returncode}: {result.stderr[:500]}"
+            502,
+            f"claude CLI exit={result.returncode} stderr={err_tail!r} stdout={out_tail!r}",
         )
     try:
         body = json.loads(result.stdout)
