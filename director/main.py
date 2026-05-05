@@ -40,12 +40,20 @@ def _neon_dsn() -> str | None:
 
 
 def _try_acquire_cycle_lock(holder: str) -> bool:
-    """Best-effort fleet lock against a Neon `locks` table. No-ops + returns
-    True when Neon isn't configured so the legacy single-cron behavior is
-    preserved.
+    """Best-effort fleet lock against the Neon `fleet.locks` control-plane
+    table provisioned by motto-mcp-server. No-ops + returns True when Neon
+    isn't configured so the legacy single-cron behavior is preserved.
 
-    Schema assumed (control plane is already provisioned):
-        locks(resource TEXT PRIMARY KEY, holder TEXT, expires_at TIMESTAMPTZ)
+    Schema (owned by mcp_server.db.apply_migrations):
+        fleet.locks(resource TEXT PRIMARY KEY, holder_run UUID,
+                    acquired_at TIMESTAMPTZ, expires_at TIMESTAMPTZ)
+
+    `holder_run` is a fleet-wide run id (uuid). When called from the cycle
+    entrypoint we don't yet have a track_run uuid, so we synthesize a
+    deterministic uuid from `holder` (a uuid4().hex[:12] in main.run) so the
+    column types match. The `holder` parameter is mapped to a uuid via
+    uuid5(NAMESPACE_OID, holder) — collision-resistant for our cardinality
+    and stable across acquire/release within a single cycle.
     """
     dsn = _neon_dsn()
     if not dsn:
@@ -56,23 +64,26 @@ def _try_acquire_cycle_lock(holder: str) -> bool:
         logger.debug("psycopg not installed; skipping fleet lock")
         return True
 
+    holder_run = str(uuid.uuid5(uuid.NAMESPACE_OID, holder))
     try:
         with psycopg.connect(dsn, connect_timeout=5) as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "INSERT INTO locks (resource, holder, expires_at) "
-                    "VALUES (%s, %s, NOW() + (%s || ' seconds')::interval) "
+                    "INSERT INTO fleet.locks (resource, holder_run, acquired_at, expires_at) "
+                    "VALUES (%s, %s, NOW(), NOW() + (%s || ' seconds')::interval) "
                     "ON CONFLICT (resource) DO UPDATE "
-                    "SET holder = EXCLUDED.holder, expires_at = EXCLUDED.expires_at "
-                    "WHERE locks.expires_at < NOW() "
-                    "RETURNING holder",
-                    (CYCLE_LOCK_RESOURCE, holder, str(CYCLE_LOCK_TTL_SECONDS)),
+                    "SET holder_run = EXCLUDED.holder_run, "
+                    "    acquired_at = EXCLUDED.acquired_at, "
+                    "    expires_at = EXCLUDED.expires_at "
+                    "WHERE fleet.locks.expires_at < NOW() "
+                    "RETURNING holder_run",
+                    (CYCLE_LOCK_RESOURCE, holder_run, str(CYCLE_LOCK_TTL_SECONDS)),
                 )
                 row = cur.fetchone()
             conn.commit()
         if row is None:
             return False
-        return row[0] == holder
+        return str(row[0]) == holder_run
     except Exception as e:
         logger.warning("cycle lock acquire failed (continuing): %s", e)
         return True
@@ -82,13 +93,14 @@ def _try_release_cycle_lock(holder: str) -> None:
     dsn = _neon_dsn()
     if not dsn:
         return
+    holder_run = str(uuid.uuid5(uuid.NAMESPACE_OID, holder))
     try:
         import psycopg
         with psycopg.connect(dsn, connect_timeout=5) as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "DELETE FROM locks WHERE resource = %s AND holder = %s",
-                    (CYCLE_LOCK_RESOURCE, holder),
+                    "DELETE FROM fleet.locks WHERE resource = %s AND holder_run = %s",
+                    (CYCLE_LOCK_RESOURCE, holder_run),
                 )
             conn.commit()
     except Exception as e:
