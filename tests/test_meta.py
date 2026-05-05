@@ -199,6 +199,7 @@ def test_synthesize_filters_low_confidence_and_caps_at_three(monkeypatch):
 
 def test_synthesize_returns_empty_when_no_llm_keys(monkeypatch):
     for key in (
+        "CLAUDE_CODE_OAUTH_TOKEN",
         "ANTHROPIC_API_KEY",
         "DEEPSEEK_API_KEY",
         "GROQ_API_KEY",
@@ -207,6 +208,24 @@ def test_synthesize_returns_empty_when_no_llm_keys(monkeypatch):
         monkeypatch.delenv(key, raising=False)
     out = asyncio.run(meta.synthesize_improvements({"sessions_spawned": 5}))
     assert out == []
+
+
+def test_any_llm_provider_recognizes_claude_max(monkeypatch):
+    """Regression: after PR #24, CLAUDE_CODE_OAUTH_TOKEN became the deployed
+    primary provider. Prior to this fix, _any_llm_provider_configured()
+    only checked the four pre-PR-#24 keys, so the entire weekly meta cron
+    silently no-opped whenever claude_max was the only configured provider."""
+    for key in (
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "GROQ_API_KEY",
+        "OPENROUTER_API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    assert meta._any_llm_provider_configured() is False
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "fake-oauth-token")
+    assert meta._any_llm_provider_configured() is True
 
 
 def test_synthesize_handles_malformed_llm_response(monkeypatch):
