@@ -27,6 +27,7 @@ DEFAULT_WATCH_REPOS: tuple[str, ...] = (
     "lkmotto/motto-appraisal-cockpit",
     "lkmotto/motto-mcp-server",
     "lkmotto/motto-director",
+    "lkmotto/appraisalos-bidding",
 )
 
 
