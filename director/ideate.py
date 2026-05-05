@@ -336,11 +336,31 @@ def _call_claude_max(system: str, user_msg: str) -> _ProviderResult:
 
     text = parsed_body.get("result") or ""
     usage = parsed_body.get("usage") or {}
+    # Diagnostic: the CLI JSON shape has shifted across versions. Log the
+    # top-level keys + usage keys + result text length so we can see why
+    # tokens_in/tokens_out come back as 0 and confirm `result` is populated.
+    _log(
+        "claude_max.body_shape",
+        body_keys=sorted(parsed_body.keys()),
+        usage_keys=sorted(usage.keys()) if isinstance(usage, dict) else [],
+        usage_value=usage if isinstance(usage, dict) else None,
+        result_text_len=len(text),
+        result_text_head=text[:300],
+        terminal_reason=parsed_body.get("terminal_reason"),
+        num_turns=parsed_body.get("num_turns"),
+        total_cost_usd=parsed_body.get("total_cost_usd"),
+    )
+    # Some CLI versions nest token counts under message.usage instead of
+    # the top-level usage key. Fall back to that shape if needed.
+    if not usage and isinstance(parsed_body.get("message"), dict):
+        msg_usage = parsed_body["message"].get("usage") or {}
+        if isinstance(msg_usage, dict):
+            usage = msg_usage
     return _ProviderResult(
         text=text,
         model=parsed_body.get("model", model),
-        tokens_in=usage.get("input_tokens", 0),
-        tokens_out=usage.get("output_tokens", 0),
+        tokens_in=usage.get("input_tokens", 0) if isinstance(usage, dict) else 0,
+        tokens_out=usage.get("output_tokens", 0) if isinstance(usage, dict) else 0,
     )
 
 
@@ -483,8 +503,23 @@ def ideate(snapshot: Snapshot, *, client: Anthropic | None = None) -> list[NextM
             model=result.model,
             tokens_in=result.tokens_in,
             tokens_out=result.tokens_out,
+            response_text_len=len(result.text or ""),
+            response_text_head=(result.text or "")[:500],
         )
-        return _parse_text_to_moves(result.text)
+        moves = _parse_text_to_moves(result.text)
+        # Diagnostic: when zero moves are produced, log enough of the raw
+        # response to debug whether the model returned `{"moves":[]}`,
+        # malformed JSON, a refusal, or wrapped its output unexpectedly.
+        if not moves:
+            _log(
+                "ideate.zero_moves",
+                provider=provider,
+                model=result.model,
+                response_text_len=len(result.text or ""),
+                response_text_full=(result.text or "")[:4000],
+                prompt_user_msg_len=len(user_msg),
+            )
+        return moves
 
     return []
 
