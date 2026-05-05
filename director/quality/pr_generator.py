@@ -90,7 +90,7 @@ def confidence_threshold() -> float:
 def is_configured() -> bool:
     if not shutil.which("gh"):
         return False
-    return bool(os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN"))
+    return bool(os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_PAT"))
 
 
 def generate(

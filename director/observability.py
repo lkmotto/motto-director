@@ -129,10 +129,11 @@ def init_fastapi(app: Any) -> None:
 async def _mcp_client():
     """Yield a connected fastmcp Client. Caller checks _mcp_enabled() first."""
     from fastmcp import Client
+    from fastmcp.client.auth import BearerAuth
 
     url = os.environ["MOTTO_MCP_URL"]
     token = os.environ["MOTTO_MCP_AUTH_TOKEN"]
-    async with Client(transport=url, headers={"Authorization": f"Bearer {token}"}) as c:
+    async with Client(url, auth=BearerAuth(token)) as c:
         yield c
 
 

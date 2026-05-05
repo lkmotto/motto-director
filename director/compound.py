@@ -77,7 +77,7 @@ def is_self_mod(repo: str, paths: list[str]) -> bool:
 
 def _gh_headers() -> dict[str, str]:
     return {
-        "Authorization": f"Bearer {os.environ.get('GITHUB_TOKEN', '')}",
+        "Authorization": f"Bearer {os.environ.get('GITHUB_TOKEN') or os.environ.get('GITHUB_PAT', '')}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }

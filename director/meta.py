@@ -76,7 +76,7 @@ def _log(event_name: str, **fields: object) -> None:
 
 def _gh_headers() -> dict[str, str]:
     return {
-        "Authorization": f"Bearer {os.environ.get('GITHUB_TOKEN', '')}",
+        "Authorization": f"Bearer {os.environ.get('GITHUB_TOKEN') or os.environ.get('GITHUB_PAT', '')}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
@@ -121,7 +121,7 @@ async def gather_outcomes(since_days: int = 7) -> dict[str, Any]:
     repos_to_probe.discard("")
 
     pr_index: dict[str, list[dict[str, Any]]] = {}
-    if repos_to_probe and os.environ.get("GITHUB_TOKEN"):
+    if repos_to_probe and (os.environ.get("GITHUB_TOKEN") or os.environ.get("GITHUB_PAT")):
         async with httpx.AsyncClient(timeout=30.0) as client:
             for repo in repos_to_probe:
                 pr_index[repo] = await _fetch_recent_prs(client, repo)
@@ -356,7 +356,7 @@ async def file_meta_pr(improvements: list[Improvement]) -> str | None:
     means the patch is advisory, and applying without review would amount to
     weekly self-modification, which violates the self-mod guard philosophy.
     """
-    if not improvements or not os.environ.get("GITHUB_TOKEN"):
+    if not improvements or not (os.environ.get("GITHUB_TOKEN") or os.environ.get("GITHUB_PAT")):
         if improvements:
             _log("meta.skip_filing", reason="no GITHUB_TOKEN")
         return None
