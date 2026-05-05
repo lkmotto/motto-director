@@ -109,7 +109,7 @@ def _age_hours(iso: str) -> float:
 
 
 def _gh_headers() -> dict[str, str]:
-    token = os.environ.get("GITHUB_TOKEN", "")
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GITHUB_PAT") or ""
     return {
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
@@ -120,8 +120,10 @@ def _gh_headers() -> dict[str, str]:
 def northflank_api_key() -> str:
     """Read Northflank credential. Prefers NORTHFLANK_API_KEY (per shared
     sdr-agent-secrets group); falls back to NORTHFLANK_API_TOKEN."""
-    return os.environ.get("NORTHFLANK_API_KEY") or os.environ.get(
-        "NORTHFLANK_API_TOKEN", ""
+    return (
+        os.environ.get("NORTHFLANK_API_KEY")
+        or os.environ.get("NORHTFLANK_API")
+        or os.environ.get("NORTHFLANK_API_TOKEN", "")
     )
 
 

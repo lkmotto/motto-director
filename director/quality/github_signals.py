@@ -42,7 +42,11 @@ def is_configured() -> bool:
     """gh CLI must be on PATH and a token must be visible to it."""
     if not shutil.which("gh"):
         return False
-    return bool(os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN"))
+    return bool(
+        os.environ.get("GITHUB_TOKEN")
+        or os.environ.get("GH_TOKEN")
+        or os.environ.get("GITHUB_PAT")
+    )
 
 
 def _empty() -> dict[str, Any]:
