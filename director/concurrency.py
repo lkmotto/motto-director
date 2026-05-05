@@ -35,13 +35,18 @@ def _success_rate_7d(dsn: str) -> tuple[float, int] | None:
         logger.debug("psycopg not installed; skipping adaptive concurrency lookup")
         return None
 
+    # Joined query against the fleet.* control plane (owned by
+    # motto-mcp-server's apply_migrations). The legacy `runs` table in
+    # the public schema had `agent_name`; the canonical fleet schema
+    # uses `agent_id` with a foreign key to `fleet.agents`.
     query = (
         "SELECT "
-        "  COUNT(*) FILTER (WHERE status = 'success')::float AS ok, "
+        "  COUNT(*) FILTER (WHERE r.status = 'success')::float AS ok, "
         "  COUNT(*)::float AS total "
-        "FROM runs "
-        f"WHERE started_at >= NOW() - INTERVAL '{WINDOW_DAYS} days' "
-        "  AND agent_name = 'motto-director'"
+        "FROM fleet.runs r "
+        "JOIN fleet.agents a ON a.id = r.agent_id "
+        f"WHERE r.started_at >= NOW() - INTERVAL '{WINDOW_DAYS} days' "
+        "  AND a.name = 'motto-director'"
     )
     try:
         with psycopg.connect(dsn, connect_timeout=5) as conn:
