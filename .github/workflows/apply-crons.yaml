@@ -37,6 +37,8 @@ jobs:
 
       - name: Apply crons
         env:
-          NORTHFLANK_API_KEY: ${{ secrets.NORTHFLANK_API_KEY }}
+          # Accept either canonical name; old runs used NORTHFLANK_API,
+          # new convention is NORTHFLANK_API_KEY.
+          NORTHFLANK_API_KEY: ${{ secrets.NORTHFLANK_API_KEY || secrets.NORTHFLANK_API }}
           DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
         run: python scripts/apply_northflank_crons.py
