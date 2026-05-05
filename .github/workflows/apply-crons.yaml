@@ -1,0 +1,42 @@
+name: apply-crons
+
+# Pushes northflank/crons.yaml changes to Northflank as cron jobs
+# whenever the manifest lands on main. Idempotent — see
+# scripts/apply_northflank_crons.py for behavior.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'northflank/crons.yaml'
+      - 'scripts/apply_northflank_crons.py'
+      - '.github/workflows/apply-crons.yaml'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Print intended writes without calling the Northflank API'
+        type: boolean
+        default: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: '3.12'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install httpx pyyaml
+
+      - name: Apply crons
+        env:
+          NORTHFLANK_API_KEY: ${{ secrets.NORTHFLANK_API_KEY }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+        run: python scripts/apply_northflank_crons.py

@@ -1,0 +1,53 @@
+# Northflank cron-job manifest for motto-director's heartbeat.
+#
+# Replaces the manual Perplexity-Computer pings that used to drive the
+# director loop. Apply via `scripts/apply_northflank_crons.py` (run by the
+# `apply-crons` GitHub Action whenever this file changes on main).
+#
+# Schedule fields are 5-field UTC cron expressions. All jobs share the
+# motto-director Docker image (see ../Dockerfile); only the `command`
+# differs per job. Concurrency between jobs is handled by the
+# `director:cycle` lock in main.py — overlapping ticks short-circuit.
+#
+# ⚠️ perceive / ideate / act all run the full cycle today (see
+# director/cli.py). They're listed as separate jobs so the schedule
+# matches the spec the user asked for and so we have three named
+# heartbeats. A future PR can split them when Neon-mediated state passing
+# is in place.
+
+project: motto-agents
+image: motto-director  # built from Dockerfile in this repo
+defaults:
+  retries: 1
+  timeout_seconds: 600  # 10 min — cycle lock TTL is 15 min
+
+crons:
+  - name: director-perceive
+    schedule: "*/15 * * * *"     # every 15 minutes
+    command: ["python", "-m", "director.cli", "perceive"]
+    retries: 1
+    timeout_seconds: 600
+
+  - name: director-ideate
+    schedule: "5 * * * *"        # hourly at :05
+    command: ["python", "-m", "director.cli", "ideate"]
+    retries: 1
+    timeout_seconds: 600
+
+  - name: director-act
+    schedule: "10 * * * *"       # hourly at :10 (after ideate :05 finishes)
+    command: ["python", "-m", "director.cli", "act"]
+    retries: 1
+    timeout_seconds: 600
+
+  - name: director-digest
+    schedule: "15 */6 * * *"     # every 6 hours at :15
+    command: ["python", "-m", "director.cli", "digest"]
+    retries: 1
+    timeout_seconds: 300
+
+  - name: director-meta
+    schedule: "0 9 * * 1"        # Mondays 09:00 UTC
+    command: ["python", "-m", "director.cli", "meta"]
+    retries: 0                   # weekly — failures should surface, not retry silently
+    timeout_seconds: 1800
