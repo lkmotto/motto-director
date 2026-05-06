@@ -47,6 +47,42 @@ MCP_URL = "https://p01--motto-mcp-server--hq2dk45g4bfc.code.run"
 # Doppler's own metadata, not real secrets.
 DOPPLER_META = ("DOPPLER_PROJECT", "DOPPLER_CONFIG", "DOPPLER_ENVIRONMENT")
 
+# Keys we explicitly REFUSE to mirror to Northflank, even if Doppler
+# has them. Reasons noted inline.
+DENYLIST = frozenset({
+    # The Doppler PAT itself. If it leaks via a Northflank container,
+    # an attacker can rewrite every Doppler secret. Never mirror.
+    "DOPPLER_PERSONAL_TOKEN",
+    "DOPPLER_TOKEN",
+})
+
+# Aliases: Doppler stores some keys under one name, but agents read them
+# under another (legacy/canonical). Sync writes BOTH sides so neither
+# the agents nor a future Doppler-canonical migration breaks.
+#
+# Format: { canonical_alias: doppler_source_key }
+# After sync, the merged set will contain both keys with the same value.
+ALIASES = {
+    # Agents read DEEPSEEK_API_KEY; Doppler stores DEEPSEEK_API
+    "DEEPSEEK_API_KEY": "DEEPSEEK_API",
+    # Cockpit reads DATABASE_URL; Doppler stores NEON_DATABASE_URL
+    "DATABASE_URL": "NEON_DATABASE_URL",
+    "NEON_CONNECTION_STRING": "NEON_DATABASE_URL",
+    # MCP reads MCP_AUTH_TOKEN; Doppler stores MOTTO_MCP_AUTH_TOKEN
+    "MCP_AUTH_TOKEN": "MOTTO_MCP_AUTH_TOKEN",
+    # GitHub action repos read GITHUB_TOKEN; Doppler stores GITHUB_PAT
+    "GITHUB_TOKEN": "GITHUB_PAT",
+}
+
+# Typo keys in Doppler we want to fix at sync time. Source key is what
+# Doppler currently has (typo); target is the corrected name. Both are
+# pushed to Northflank so a future Doppler rename doesn't break.
+TYPO_FIXES = {
+    # "NORHTFLANK_API" → "NORTHFLANK_API" (typo in Doppler)
+    "NORTHFLANK_API": "NORHTFLANK_API",
+    "NORTHFLANK_API_KEY": "NORHTFLANK_API",
+}
+
 # Hard floor: if the merged set is smaller than this, abort. Empirical
 # floor based on what motto-core/prd is supposed to contain. Bump as
 # the canonical set grows.
@@ -125,15 +161,40 @@ def fetch_northflank_group(token: str) -> tuple[dict[str, str], dict[str, Any]]:
     return {k: str(v) for k, v in variables.items()}, restrictions
 
 
-def inject_runtime(merged: dict[str, str]) -> dict[str, str]:
-    """Inject keys that are computed, not stored in Doppler."""
+def transform(doppler: dict[str, str]) -> dict[str, str]:
+    """Apply denylist + aliases + typo fixes + runtime injects.
+
+    Returns the FINAL set we'll push to Northflank.
+    """
+    # 1. Denylist
+    merged = {k: v for k, v in doppler.items() if k not in DENYLIST}
+
+    # 2. Aliases — add canonical names for keys agents expect, sourced
+    #    from the Doppler key. Original Doppler key is also preserved.
+    for alias, source_key in ALIASES.items():
+        if source_key in merged:
+            merged.setdefault(alias, merged[source_key])
+
+    # 3. Typo fixes — add corrected name pointing at typo'd Doppler key.
+    for correct, typo_key in TYPO_FIXES.items():
+        if typo_key in merged:
+            merged.setdefault(correct, merged[typo_key])
+
+    # 4. Runtime injects: keys not stored in Doppler.
     merged["MOTTO_MCP_URL"] = MCP_URL
-    # Build OTEL header from Langfuse keys if present and non-placeholder
-    pub = merged.get("LANGFUSE_PUBLIC_KEY", "")
-    sec = merged.get("LANGFUSE_SECRET_KEY", "")
-    if pub and sec and "TODO" not in pub and "TODO" not in sec:
-        basic = base64.b64encode(f"{pub}:{sec}".encode()).decode()
-        merged["OTEL_EXPORTER_OTLP_HEADERS"] = f"Authorization=Basic%20{basic}"
+
+    # 5. Build OTEL header from Langfuse keys if present and non-placeholder.
+    #    Skip if OTEL_EXPORTER_OTLP_HEADERS already present in Doppler
+    #    (Doppler wins — Doppler is source of truth).
+    if "OTEL_EXPORTER_OTLP_HEADERS" not in merged:
+        pub = merged.get("LANGFUSE_PUBLIC_KEY", "")
+        sec = merged.get("LANGFUSE_SECRET_KEY", "")
+        if pub and sec and "TODO" not in pub and "TODO" not in sec:
+            basic = base64.b64encode(f"{pub}:{sec}".encode()).decode()
+            merged["OTEL_EXPORTER_OTLP_HEADERS"] = (
+                f"Authorization=Basic%20{basic}"
+            )
+
     return merged
 
 
@@ -168,8 +229,7 @@ def main() -> None:
     # - Anything Northflank had but Doppler doesn't → DROP (the postmortem
     #   showed orphan keys persist forever otherwise)
     # - Then inject runtime-only keys (MOTTO_MCP_URL, OTEL headers)
-    merged = dict(doppler)
-    merged = inject_runtime(merged)
+    merged = transform(doppler)
 
     # Safety floor
     if len(merged) < MIN_KEYS_FLOOR:
