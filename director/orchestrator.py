@@ -14,12 +14,22 @@ ranked list of NextMoves.
 Each subagent gets the same Snapshot but a different system prompt that
 tells it which lens to apply, what to look for, and what to ignore.
 
-Default lenses (5):
-  - ci_doctor:       red CI, flaky tests, broken builds
-  - stale_pr_closer: PRs idle >24h with green CI; propose merge or rebase
-  - issue_triager:   cluster open issues; merge dupes / close stale / promote
-  - cross_repo:      one repo's change implies follow-up in another
-  - cost_watchdog:   Langfuse + NF metrics regressions
+Default lenses (8):
+  Maintenance lenses (small, narrow):
+  - ci_doctor:        red CI, flaky tests, broken builds
+  - stale_pr_closer:  PRs idle >24h with green CI; propose merge or rebase
+  - issue_triager:    cluster open issues; merge dupes / close stale / promote
+  - cross_repo:       one repo's change implies follow-up in another
+  - cost_watchdog:    Langfuse + NF metrics regressions
+
+  Strategic lenses (big, ambitious):
+  - architect:        propose structural upgrades (new agents, new lenses,
+                      consolidations, simplifications) — uses STRATEGIC_INTENT
+                      to know what we're trying to *build*
+  - opportunity_scout: looks at what's *missing* (capability gaps, unwritten
+                      tests, manual workflows that should be automated)
+  - epic_bundler:     after the other lenses run, take their proposals and
+                      bundle related ones into single compound sessions
 
 Activation: set DIRECTOR_PARALLEL_SUBAGENTS=1 on the NF job env. When
 unset (or 0), main.py uses the legacy `ideate()` path.
@@ -41,6 +51,7 @@ import httpx
 
 from director.ideate import NextMove, _coerce_move
 from director.perceive import Snapshot
+from director.strategy import format_for_prompt, load_strategic_intent
 
 DEEPSEEK_BASE_URL = os.environ.get(
     "DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"
@@ -194,25 +205,142 @@ Ignore: PR queue, CI, issue triage, cross-repo.
 """ + _BASE_RULES,
 }
 
+LENS_PROMPTS["architect"] = """You are the fleet architect for the motto stack.
+
+Lens: structural upgrades — the kind of moves that make the system *better*,
+not just unbroken. Read the STRATEGIC INTENT block carefully; every move you
+propose should advance one of the listed priorities or remove an item from
+the "Things to avoid" list.
+
+Look for:
+  - Capability gaps in the fleet (an agent that should exist but doesn't)
+  - Lens gaps in motto-director itself (your own blind spots)
+  - Consolidation opportunities (two repos that should be one, two
+    Doppler projects that should be one)
+  - Patterns of repeated manual work that should be automated
+  - Pieces of the 90-day priorities that have stalled
+  - Self-improvement: motto-director should propose PRs against itself
+    when DIRECTOR_ALLOW_SELF_MOD is enabled
+
+Propose:
+  - compound_pr moves with concrete code_changes for small, surgical
+    self-modifications (new lens, prompt tweak, new policy gate)
+  - spawn_session moves for larger refactors. Be ambitious with scope:
+    a single session that touches 2-3 related files and rebases a stalled
+    PR is BETTER than 3 separate sessions.
+  - file_issue moves to capture an architectural decision Luke needs to
+    make ("should we promote X to its own repo?")
+
+Ignore: day-to-day CI failures, individual stale PRs, duplicate issues.
+Other lenses cover those.
+
+Bias: prefer one big high-leverage move over five small ones. Empty list
+is better than a small move padding the count.
+
+""" + _BASE_RULES
+
+
+LENS_PROMPTS["opportunity_scout"] = """You are the opportunity scout for the motto stack.
+
+Lens: things that are *missing*, not things that are broken. The director's
+other lenses are janitorial — you find net-new value.
+
+Look for:
+  - Capabilities the strategic intent calls for but no agent owns yet
+  - Tests that don't exist for code paths that already shipped
+  - Observability gaps (an agent with no Langfuse traces, a service with
+    no /health endpoint, a job with no run-status query)
+  - Knowledge artifacts not yet captured (a runbook that should exist,
+    a CLAUDE.md missing for a repo, a postmortem not written)
+  - External integrations Luke uses manually but no agent does
+    (Apollo enrichment, Lavender scoring, Plaid sync, etc.)
+  - Wins blocked by a single small missing piece
+
+Propose:
+  - file_issue moves naming the gap explicitly with rationale citing why
+    it matters now
+  - spawn_session moves to fill the gap (Claude Code prompt that creates
+    the missing file/test/runbook)
+  - compound_pr moves with concrete content for small additive files
+
+Ignore: existing issues being worked on, PRs in flight, CI noise.
+
+Bias: name what's missing in plain language. Don't propose if you can't
+cite a concrete reason it matters this cycle.
+
+""" + _BASE_RULES
+
+
+LENS_PROMPTS["epic_bundler"] = """You are the epic bundler for the motto stack.
+
+This lens runs AFTER the other lenses. You receive their merged proposals
+in the user message under `=== UPSTREAM PROPOSALS ===`. Your job is to spot
+groups of related small moves and bundle them into one ambitious move that
+does the same work in fewer sessions.
+
+Look for:
+  - 2+ moves on the same repo that touch the same area
+  - 2+ moves whose Claude Code prompts could share context
+  - Sequences of dependent moves ("rebase PR #X then merge" → one session)
+  - Janitorial moves on the same repo that could ship as one cleanup PR
+
+Propose:
+  - compound_pr moves bundling 2+ small file_issue tasks into one
+  - spawn_session moves with prompts of the form: "In a single session,
+    do A, then B, then C" — referencing concrete PR/issue numbers
+  - merge_pr moves only when the upstream lens already cleared CI
+
+Return an EMPTY moves list when nothing meaningful can be bundled. The
+goal is fewer-bigger, not more-moves.
+
+When you bundle, the bundled session should explicitly reference the
+upstream move titles in its `intent` field so the human approver knows
+which smaller moves the bundle replaces.
+
+""" + _BASE_RULES
+
+
 DEFAULT_LENSES: tuple[str, ...] = (
     "ci_doctor",
     "stale_pr_closer",
     "issue_triager",
     "cross_repo",
     "cost_watchdog",
+    "architect",
+    "opportunity_scout",
 )
+# epic_bundler runs after the others (sequential pass) so it sees their
+# moves; it's NOT in DEFAULT_LENSES (which is the parallel-fanout list).
 
 
 def _snapshot_to_prompt(snapshot: Snapshot) -> str:
     return json.dumps(asdict(snapshot), indent=2, default=str)
 
 
-def _user_message(snapshot: Snapshot) -> str:
-    return (
+def _user_message(
+    snapshot: Snapshot,
+    *,
+    strategic_intent: str = "",
+    repo_evidence: str = "",
+    upstream_proposals: str = "",
+) -> str:
+    parts: list[str] = []
+    if strategic_intent:
+        parts.append(strategic_intent.rstrip() + "\n")
+    if repo_evidence:
+        parts.append(repo_evidence.rstrip() + "\n")
+    if upstream_proposals:
+        parts.append(
+            "===== UPSTREAM PROPOSALS (from sibling lenses) =====\n"
+            + upstream_proposals.rstrip()
+            + "\n===== END UPSTREAM PROPOSALS =====\n"
+        )
+    parts.append(
         "Snapshot of the motto stack:\n\n```json\n"
         + _snapshot_to_prompt(snapshot)
         + "\n```\n\nPropose your ranked next moves as strict JSON."
     )
+    return "\n".join(parts)
 
 
 def _extract_json(text: str) -> dict:
@@ -385,7 +513,21 @@ async def parallel_ideate(
         return []
 
     model = DEEPSEEK_DEFAULT_MODEL
-    user_msg = _user_message(snapshot)
+
+    # Load strategic intent + deep-read evidence once, share across lenses.
+    strategic_intent = format_for_prompt(load_strategic_intent())
+    try:
+        from director import deep_read
+        repo_evidence = deep_read.gather_evidence(snapshot) if deep_read.is_enabled() else ""
+    except Exception as exc:  # noqa: BLE001
+        _log("deep_read.failed", error=str(exc)[:300])
+        repo_evidence = ""
+
+    user_msg = _user_message(
+        snapshot,
+        strategic_intent=strategic_intent,
+        repo_evidence=repo_evidence,
+    )
     sem = asyncio.Semaphore(max_concurrency)
 
     async with httpx.AsyncClient() as client:
@@ -408,6 +550,37 @@ async def parallel_ideate(
 
         results = await asyncio.gather(*(_run(lens) for lens in lenses))
 
+        # Epic bundler post-pass: see if upstream moves can be bundled.
+        merged_upstream = _merge_moves(results)
+        bundler_moves: list[NextMove] = []
+        if merged_upstream and "epic_bundler" in LENS_PROMPTS:
+            upstream_text = json.dumps(
+                [asdict(m) for m in merged_upstream], indent=2, default=str
+            )
+            bundler_user_msg = _user_message(
+                snapshot,
+                strategic_intent=strategic_intent,
+                repo_evidence=repo_evidence,
+                upstream_proposals=upstream_text,
+            )
+            bundler_result = await _call_subagent(
+                client,
+                lens="epic_bundler",
+                system=LENS_PROMPTS["epic_bundler"],
+                user_msg=bundler_user_msg,
+                api_key=api_key,
+                model=model,
+            )
+            results.append(bundler_result)
+            bundler_moves = bundler_result.moves
+            _log(
+                "orchestrator.bundler.done",
+                bundled_moves=len(bundler_moves),
+                tokens_in=bundler_result.tokens_in,
+                tokens_out=bundler_result.tokens_out,
+                latency_ms=bundler_result.latency_ms,
+            )
+
     total_in = sum(r.tokens_in for r in results)
     total_out = sum(r.tokens_out for r in results)
     failures = [r for r in results if r.error]
@@ -418,6 +591,8 @@ async def parallel_ideate(
         total_tokens_in=total_in,
         total_tokens_out=total_out,
         moves_per_lens={r.lens: len(r.moves) for r in results},
+        deep_read_bytes=len(repo_evidence.encode("utf-8")) if repo_evidence else 0,
+        strategic_intent_bytes=len(strategic_intent.encode("utf-8")) if strategic_intent else 0,
     )
 
     return _merge_moves(results)

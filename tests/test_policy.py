@@ -229,19 +229,25 @@ def test_filter_moves_manual_mode_keeps_unlabeled_spawn_session():
 
 
 def test_filter_moves_manual_mode_still_drops_oversized_prompt():
-    """Manual mode still enforces prompt-scope safeguard (not a human-judgment gate)."""
+    """Manual mode still enforces prompt-scope safeguard at MANUAL ceiling."""
     issue = _issue(title="Issue title", labels=["bug"])
     snap = _snapshot(issues=[issue])
-    moves = [
-        _move_spawn(
-            prompt=(
-                "rewrite src/a.py src/b.py src/c.py src/d.py and refactor "
-                "all of the helpers"
-            )
-        )
-    ]
+    # 15 paths > MAX_FILES_PER_SESSION_MANUAL (12)
+    paths = " ".join(f"src/file{i}.py" for i in range(15))
+    moves = [_move_spawn(prompt=f"rewrite {paths} and refactor all of the helpers")]
     kept = policy.filter_moves(moves, snap, manual_mode=True)
     assert kept == []
+
+
+def test_filter_moves_manual_mode_keeps_medium_scope_that_auto_drops():
+    """Manual mode allows scope between auto cap (3) and manual cap (12)."""
+    issue = _issue(title="Issue title", labels=["bug"])
+    snap = _snapshot(issues=[issue])
+    # 6 paths > auto cap (3) but < manual cap (12)
+    paths = " ".join(f"src/file{i}.py" for i in range(6))
+    moves = [_move_spawn(prompt=f"update {paths}")]
+    assert policy.filter_moves(moves, snap, manual_mode=False) == []
+    assert len(policy.filter_moves(moves, snap, manual_mode=True)) == 1
 
 
 def test_filter_moves_drops_oversized_prompt_even_when_labeled():

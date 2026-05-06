@@ -50,6 +50,12 @@ TIER_1_PATTERNS: tuple[str, ...] = (
 
 MAX_FILES_PER_SESSION = 3
 MAX_LOC_PER_SESSION = 200
+# Manual-mode ceiling: human is the gate, so we let bigger compound moves
+# through. Override via DIRECTOR_MAX_FILES_MANUAL env if you want a different
+# scope cap for human-reviewed proposals.
+MAX_FILES_PER_SESSION_MANUAL = int(
+    os.environ.get("DIRECTOR_MAX_FILES_MANUAL", "12")
+)
 
 CI_BOT_AUTHOR = "github-actions[bot]"
 
@@ -262,9 +268,11 @@ def _evaluate(
         # prompts that look like multi-file refactors — those are the
         # bandwidth wasters this whole module exists to stop.
         size = estimate_session_diff_size(move.prompt_for_claude_code)
-        if size > MAX_FILES_PER_SESSION:
-            return False, f"prompt scope estimate {size} > {MAX_FILES_PER_SESSION}"
+        cap = MAX_FILES_PER_SESSION_MANUAL if manual_mode else MAX_FILES_PER_SESSION
+        if size > cap:
+            return False, f"prompt scope estimate {size} > {cap}"
         return True, "ok"
+
 
     if move.kind == "merge_pr":
         pr = _find_pr(snapshot, move.repo, move.title)
