@@ -208,6 +208,40 @@ async def record_decision(
         return None
 
 
+async def last_planner_was_truncated(
+    *,
+    since_minutes: int = 240,
+) -> bool:
+    """Did the most recent planner.cycle event report finish_reason='length'?
+
+    Used by the orchestrator to auto-promote the planner to a higher-cap
+    model on the very next cycle. Defaults to a 4h lookback so we don't
+    promote forever based on stale truncation.
+    """
+    if not _mcp_enabled():
+        return False
+    try:
+        events = await recent_events(
+            since_minutes=since_minutes,
+            agent_name="motto-director",
+            kind="planner.cycle",
+            limit=1,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("last_planner_was_truncated failed: %s", e)
+        return False
+    if not events:
+        return False
+    payload = events[0].get("payload") or {}
+    if isinstance(payload, str):
+        try:
+            import json as _json
+            payload = _json.loads(payload)
+        except (ValueError, TypeError):
+            return False
+    return str(payload.get("finish_reason") or "").lower() == "length"
+
+
 async def record_planner_event(
     *,
     run_id: str | None,
@@ -221,6 +255,9 @@ async def record_planner_event(
     tokens_out: int,
     output_preview: str,
     open_kpi_count: int,
+    finish_reason: str = "",
+    model_used: str = "",
+    auto_promoted: bool = False,
 ) -> str | None:
     """Persist a planner-cycle observability event to fleet.events.
 
@@ -253,6 +290,9 @@ async def record_planner_event(
                         "tokens_out": tokens_out,
                         "output_preview": preview,
                         "open_kpi_count": open_kpi_count,
+                        "finish_reason": finish_reason,
+                        "model_used": model_used,
+                        "auto_promoted": auto_promoted,
                     },
                     "run_id": run_id,
                     "level": "info",
