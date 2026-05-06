@@ -64,6 +64,11 @@ DEEPSEEK_BASE_URL = os.environ.get(
 DEEPSEEK_DEFAULT_MODEL = os.environ.get(
     "DEEPSEEK_MODEL", "deepseek-v4-flash"
 )
+# Reasoner has a 32K output cap (vs 8K on chat) — used as auto-promote
+# fallback when the previous planner cycle hit finish_reason='length'.
+PLANNER_HIGH_CAP_MODEL = os.environ.get(
+    "PLANNER_HIGH_CAP_MODEL", "deepseek-reasoner"
+)
 DEEPSEEK_TIMEOUT_S = float(os.environ.get("DEEPSEEK_TIMEOUT_S", "120"))
 
 
@@ -344,6 +349,10 @@ Hard rules:
    steps in repos from a different product line.
 7. Tier-0 fleet-wide KPIs may have steps spanning multiple repos in the
    SAME product line, but each step still lands in exactly one repo.
+8. OUTPUT BUDGET: max 3 epics, max 5 steps each. Keep `rationale` and step
+   `rationale` to one sentence. The completion is hard-capped at 8192
+   tokens — if your output is truncated mid-JSON, NOTHING is parsed and
+   the whole cycle is wasted. Be precise, not verbose.
 """
 
 LENS_PROMPTS["epic_bundler"] = """You are the epic bundler for the motto stack.
@@ -670,6 +679,26 @@ async def _run_planner(
     if "planner" not in LENS_PROMPTS:
         return {"skipped": 1}
 
+    # Auto-promote: if the previous planner cycle was truncated
+    # (finish_reason='length'), use the high-cap reasoner model for THIS
+    # cycle. We don't sticky-promote — the next cycle goes back to default,
+    # which will only re-promote if it truncates again. Cheap in steady
+    # state, bulletproof when scope balloons.
+    chosen_model = model
+    promoted = False
+    try:
+        from director import fleet as fleet_mod
+        if await fleet_mod.last_planner_was_truncated():
+            chosen_model = PLANNER_HIGH_CAP_MODEL
+            promoted = True
+            _log(
+                "orchestrator.planner.auto_promote",
+                from_model=model,
+                to_model=chosen_model,
+            )
+    except Exception as exc:  # noqa: BLE001
+        _log("orchestrator.planner.auto_promote_check_failed", error=str(exc)[:200])
+
     open_kpis = sorted(count_open_kpis())
     open_kpis_text = (
         "\n".join(f"- {k}" for k in open_kpis) if open_kpis
@@ -694,8 +723,13 @@ async def _run_planner(
                 "Content-Type": "application/json",
             },
             json={
-                "model": model,
-                "max_tokens": 4096,
+                "model": chosen_model,
+                # DeepSeek chat caps completion at 8192; reasoner caps at
+                # 32768. Planner output JSON contains multi-step plans per
+                # epic and was truncating at 4096 (parsed=0). 8192 fits ~3
+                # epics with 5 steps each on chat; on auto-promoted reasoner
+                # we get headroom for any scope.
+                "max_tokens": 32768 if promoted else 8192,
                 "messages": [
                     {"role": "system", "content": LENS_PROMPTS["planner"]},
                     {"role": "user", "content": user_msg},
@@ -705,15 +739,20 @@ async def _run_planner(
         )
         resp.raise_for_status()
         data = resp.json()
-        text = (
-            data.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-        )
+        choice = (data.get("choices") or [{}])[0]
+        text = (choice.get("message") or {}).get("content", "") or ""
+        finish_reason = choice.get("finish_reason") or ""
         usage = data.get("usage", {}) or {}
+        if finish_reason and finish_reason != "stop":
+            _log(
+                "orchestrator.planner.finish_reason",
+                finish_reason=finish_reason,
+                tokens_out=int(usage.get("completion_tokens", 0) or 0),
+            )
     except Exception as exc:  # noqa: BLE001
         call_error = str(exc)[:200]
         _log("orchestrator.planner.error", error=call_error)
+        finish_reason = ""
 
     latency = int((datetime.now(UTC) - started).total_seconds() * 1000)
     candidates = _parse_planner_epics(text, run_id=run_id) if text else []
@@ -752,6 +791,9 @@ async def _run_planner(
             tokens_out=int(counts.get("tokens_out", 0)),
             output_preview=(call_error or text or ""),
             open_kpi_count=len(open_kpis),
+            finish_reason=finish_reason,
+            model_used=chosen_model,
+            auto_promoted=promoted,
         )
     except Exception as exc:  # noqa: BLE001
         _log("orchestrator.planner.event_failed", error=str(exc)[:200])
