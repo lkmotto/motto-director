@@ -272,6 +272,101 @@ def _spawn_session(
     )
 
 
+def _verify_move(move: NextMove) -> ActResult:
+    """Trigger an outcome verification on a previously-applied move.
+
+    Director proposes this kind (manually approved like any other move)
+    when it wants to confirm a prior move actually achieved its intent.
+    The move's payload must contain `target_move_id` — the pending_moves
+    row id whose outcome we want verified. The actual verifier dispatch
+    lives in motto-mcp-server (verifiers/__init__.py); we just call the
+    MCP tool here.
+
+    Capability requests fired by the verifier flow back to the cockpit
+    automatically; we record an inconclusive ActResult in that case so
+    the move terminates and director can re-propose after grant.
+    """
+    target_id = move.target_move_id
+    if target_id is None:
+        return ActResult(
+            move=move, status="error",
+            detail="verify_move payload missing target_move_id",
+        )
+    try:
+        target_id = int(target_id)
+    except (ValueError, TypeError):
+        return ActResult(
+            move=move, status="error",
+            detail=f"target_move_id not int: {target_id!r}",
+        )
+
+    if not (os.environ.get("MOTTO_MCP_URL")
+            and os.environ.get("MOTTO_MCP_AUTH_TOKEN")):
+        return ActResult(
+            move=move, status="skipped",
+            detail="verify_move: MOTTO_MCP_URL/TOKEN not configured",
+        )
+
+    async def _call() -> dict:
+        from fastmcp import Client
+        from fastmcp.client.auth import BearerAuth
+        url = os.environ["MOTTO_MCP_URL"]
+        token = os.environ["MOTTO_MCP_AUTH_TOKEN"]
+        async with Client(url, auth=BearerAuth(token)) as c:
+            resp = await c.call_tool(
+                "verify_move",
+                {
+                    "move_id": target_id,
+                    "requested_by": f"director:{fleet_run_id_var.get() or '?'}",
+                },
+            )
+            data = getattr(resp, "data", None)
+            if isinstance(data, dict):
+                return data
+            return {}
+
+    try:
+        result = asyncio.run(_call())
+    except RuntimeError:
+        # Already inside an event loop — act is normally sync, but the
+        # cycle drain calls it from async context. Fall back to a fresh
+        # loop in a thread to avoid "asyncio.run() cannot be called from
+        # a running event loop".
+        import threading
+        box: dict = {}
+        def _runner() -> None:
+            box["r"] = asyncio.run(_call())
+        t = threading.Thread(target=_runner)
+        t.start(); t.join(timeout=30)
+        result = box.get("r", {})
+    except Exception as exc:  # noqa: BLE001
+        return ActResult(
+            move=move, status="error",
+            detail=f"verify_move call failed: {type(exc).__name__}: {exc}"[:200],
+        )
+
+    status = (result or {}).get("status") or "inconclusive"
+    verifier = (result or {}).get("verifier") or "?"
+    # Map verifier outcome to ActResult status. We treat verifier 'passed'
+    # and 'failed' both as 'executed' (the verify ITSELF executed) — the
+    # outcome lives in fleet.move_verifications and trust_scores.
+    if status in ("passed", "failed"):
+        return ActResult(
+            move=move, status="executed",
+            detail=f"verify[{verifier}]={status} target=#{target_id}",
+        )
+    if status == "inconclusive":
+        return ActResult(
+            move=move, status="executed",
+            detail=f"verify[{verifier}]=inconclusive target=#{target_id}",
+        )
+    err = (result or {}).get("error") or "unknown"
+    return ActResult(
+        move=move, status="error",
+        detail=f"verify[{verifier}]={status} err={err[:120]}",
+    )
+
+
 def _merge_pr(
     client: httpx.Client, move: NextMove, snapshot: Snapshot
 ) -> ActResult:
@@ -475,6 +570,8 @@ def act(
                     results.append(_nudge_pipeline(client, move))
                 elif move.kind == "compound_pr":
                     results.append(_compound_pr(client, move, run_id=run_id))
+                elif move.kind == "verify_move":
+                    results.append(_verify_move(move))
             except httpx.HTTPError as exc:
                 results.append(
                     ActResult(move=move, status="error", detail=str(exc))

@@ -334,4 +334,7 @@ def row_to_move(row: dict[str, Any]) -> NextMove:
         priority=int(payload.get("priority", row.get("priority", 0))),
         intent=payload.get("intent", row.get("intent", "")),
         code_changes=payload.get("code_changes", []) or [],
+        epic_id=payload.get("epic_id"),
+        step_order=payload.get("step_order"),
+        target_move_id=payload.get("target_move_id"),
     )
