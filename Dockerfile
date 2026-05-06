@@ -22,7 +22,7 @@ RUN mkdir -p /var/cache/motto-director/repos
 
 RUN pip install --no-cache-dir uv
 
-COPY pyproject.toml README.md motto-strategy.md motto-kpis.md ./
+COPY pyproject.toml README.md motto-strategy.md motto-kpis.md downtime-kpis.md ./
 COPY director ./director
 COPY migrations ./migrations
 

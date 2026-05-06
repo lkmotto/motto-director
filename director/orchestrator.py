@@ -325,11 +325,20 @@ Hard rules:
 1. Output {} or {"epics": []} if you have nothing high-leverage to propose.
    Empty is better than mediocre.
 2. Each epic must have 3-8 steps. Single-step epics are not epics.
-3. `kpi_ref` MUST exactly match a KPI title from the KPIs block. If you
-   can't tie an idea to a KPI, drop it.
+3. `kpi_ref` MUST exactly match a KPI title from the KPIs block (it is the
+   text after `### KPI:` or a Tier-0 KPI title). KPIs are organized by repo;
+   pick the KPI that lives in the same repo as the steps you're proposing.
+   If you can't tie an idea to a KPI, drop it.
 4. depends_on contains step.order values; step 1 has no deps.
 5. Be ambitious with scope and concrete with steps. Each step should
    describe one observable change in one repo.
+6. NEVER mix product lines in one epic. The Motto Appraisal Service fleet
+   (motto-*, rw-order-monitor, appraisalos-*) and the DownTime product
+   line (downtime-*) are separate businesses with separate KPI files. The
+   KPIs you see in this prompt belong to ONE product line; do not propose
+   steps in repos from a different product line.
+7. Tier-0 fleet-wide KPIs may have steps spanning multiple repos in the
+   SAME product line, but each step still lands in exactly one repo.
 """
 
 LENS_PROMPTS["epic_bundler"] = """You are the epic bundler for the motto stack.
