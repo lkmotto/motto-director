@@ -33,7 +33,7 @@ import base64
 import json
 import os
 import sys
-from typing import Any, Dict, Tuple
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -58,7 +58,7 @@ def fail(msg: str, code: int = 1) -> None:
     sys.exit(code)
 
 
-def http(method: str, url: str, token: str, body: Dict[str, Any] | None = None) -> Dict[str, Any]:
+def http(method: str, url: str, token: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
     data = json.dumps(body).encode() if body is not None else None
     req = Request(
         url,
@@ -80,7 +80,7 @@ def http(method: str, url: str, token: str, body: Dict[str, Any] | None = None) 
     return {}  # unreachable
 
 
-def fetch_doppler(token: str) -> Dict[str, str]:
+def fetch_doppler(token: str) -> dict[str, str]:
     """Fetch all secrets from Doppler motto-core/prd via API.
 
     Doppler API: https://docs.doppler.com/reference/secrets-download
@@ -113,7 +113,7 @@ def fetch_doppler(token: str) -> Dict[str, str]:
     return {k: str(v) for k, v in data.items() if v is not None}
 
 
-def fetch_northflank_group(token: str) -> Tuple[Dict[str, str], Dict[str, Any]]:
+def fetch_northflank_group(token: str) -> tuple[dict[str, str], dict[str, Any]]:
     resp = http(
         "GET",
         f"https://api.northflank.com/v1/projects/{PROJECT_ID}/secrets/{GROUP_ID}",
@@ -125,7 +125,7 @@ def fetch_northflank_group(token: str) -> Tuple[Dict[str, str], Dict[str, Any]]:
     return {k: str(v) for k, v in variables.items()}, restrictions
 
 
-def inject_runtime(merged: Dict[str, str]) -> Dict[str, str]:
+def inject_runtime(merged: dict[str, str]) -> dict[str, str]:
     """Inject keys that are computed, not stored in Doppler."""
     merged["MOTTO_MCP_URL"] = MCP_URL
     # Build OTEL header from Langfuse keys if present and non-placeholder
@@ -137,7 +137,7 @@ def inject_runtime(merged: Dict[str, str]) -> Dict[str, str]:
     return merged
 
 
-def diff_summary(old: Dict[str, str], new: Dict[str, str]) -> Dict[str, list[str]]:
+def diff_summary(old: dict[str, str], new: dict[str, str]) -> dict[str, list[str]]:
     added = sorted(set(new) - set(old))
     removed = sorted(set(old) - set(new))
     changed = sorted(k for k in (set(old) & set(new)) if old[k] != new[k])
@@ -155,7 +155,7 @@ def main() -> None:
     if not nf_tok:
         fail("NORTHFLANK_API_KEY missing")
 
-    print(f"[1/4] Fetching Doppler motto-core/prd ...")
+    print("[1/4] Fetching Doppler motto-core/prd ...")
     doppler = fetch_doppler(doppler_tok)
     print(f"      Doppler returned {len(doppler)} variables")
 
@@ -179,7 +179,7 @@ def main() -> None:
         )
 
     diff = diff_summary(nf_current, merged)
-    print(f"[3/4] Diff vs current Northflank:")
+    print("[3/4] Diff vs current Northflank:")
     print(f"      + added   ({len(diff['added'])}): {diff['added']}")
     print(f"      - removed ({len(diff['removed'])}): {diff['removed']}")
     print(f"      ~ changed ({len(diff['changed'])}): {diff['changed']}")
@@ -218,7 +218,10 @@ def main() -> None:
         [(o.get("id"), o.get("type")) for o in (nf_restrictions.get("nfObjects") or [])]
     )
     if not nf_restrictions.get("restricted") or current_objs != expected_objs:
-        print(f"      restrictions need re-link (current={current_objs}, expected={expected_objs}) ...")
+        print(
+            f"      restrictions need re-link "
+            f"(current={current_objs}, expected={expected_objs}) ..."
+        )
         link_payload = {
             "restrictions": {
                 "restricted": True,
