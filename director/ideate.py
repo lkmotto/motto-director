@@ -50,6 +50,7 @@ MoveKind = Literal[
     "compound_pr",
     "file_critique_issue",
     "noop",
+    "verify_move",
 ]
 
 _VALID_KINDS: frozenset[str] = frozenset(
@@ -61,6 +62,7 @@ _VALID_KINDS: frozenset[str] = frozenset(
         "compound_pr",
         "file_critique_issue",
         "noop",
+        "verify_move",
     )
 )
 
@@ -129,7 +131,13 @@ Hard rules:
    referencing concrete signals from the snapshot — PR numbers, ages, statuses).
    Moves without intent are dropped.
 2. `kind` is one of: spawn_session, file_issue, merge_pr, nudge_pipeline,
-   compound_pr, noop.
+   compound_pr, noop, verify_move.
+   - `verify_move` triggers an outcome verification on a previously-applied
+     move. Use this AFTER applying a move, when you want to confirm the
+     move actually achieved its KPI intent. Set `target_move_id` in the
+     code_changes/payload area to the pending_moves.id you want verified.
+     Day 1 verifiers only support kind=noop and kind=merge_pr; other kinds
+     return inconclusive until per-repo verifiers are wired.
 3. `priority` is an integer 1-5 (1 = highest).
 4. `prompt_for_claude_code` is required for spawn_session moves; it must be a
    self-contained brief a fresh Claude Code session can act on.
@@ -155,6 +163,10 @@ class NextMove:
     # so applied_step_orders() can join pending_moves to epics.
     epic_id: int | None = None
     step_order: int | None = None
+    # verify_move kind: id of the pending_moves row whose outcome should
+    # be verified. Persisted into move_payload by act/queue and read back
+    # by _verify_move executor.
+    target_move_id: int | None = None
 
 
 def _log(event: str, **fields: object) -> None:
