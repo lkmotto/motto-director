@@ -49,7 +49,11 @@ from datetime import UTC, datetime
 
 import httpx
 
+from director import epic_executor as epic_executor_mod
+from director.epics import Epic, EpicStep, count_open_kpis, insert_epics
 from director.ideate import NextMove, _coerce_move
+from director.kpis import format_for_prompt as format_kpis
+from director.kpis import load_kpis
 from director.perceive import Snapshot
 from director.strategy import format_for_prompt, load_strategic_intent
 
@@ -271,6 +275,72 @@ cite a concrete reason it matters this cycle.
 """ + _BASE_RULES
 
 
+LENS_PROMPTS["planner"] = """You are the multi-cycle planner for the motto stack.
+
+This lens runs ONLY at deep_read=heavy. Your job is to look at the KPI
+gaps in the user message under `=== NORTH-STAR KPIs ===` and propose 1-3
+epics — multi-step projects that will move a specific KPI over multiple
+cycles. You are the antidote to single-redundancy janitorial work; think
+in 3-8 step plans, not one-off moves.
+
+Look for:
+  - KPIs whose current value is far from target (the bigger the gap, the
+    higher priority)
+  - Strategic priorities from STRATEGIC INTENT that no current epic owns
+  - Patterns of repeated manual work (gap that warrants a multi-step
+    automation effort, not just one issue)
+  - Capability gaps that block multiple downstream wins
+
+DO NOT propose:
+  - An epic for a KPI already in the `=== OPEN KPI EPICS ===` list — the
+    planner only proposes one epic per KPI at a time.
+  - Single-step "epics" — those are normal moves; let other lenses handle.
+  - Plans with more than 8 steps; if scope is bigger, split into a phase 1.
+
+Output STRICT JSON shape (NOT a NextMove list — DIFFERENT schema):
+  {
+    "epics": [
+      {
+        "title": "short imperative title",
+        "kpi_ref": "exact KPI name from the KPIs block (case-sensitive)",
+        "rationale": "1-3 sentences citing the KPI gap + strategic intent",
+        "estimated_cycles": 5,
+        "success_criteria": "observable outcome that closes this epic",
+        "steps": [
+          {
+            "order": 1,
+            "title": "short imperative",
+            "kind": "spawn_session" | "file_issue" | "compound_pr" | "merge_pr" | "nudge_pipeline",
+            "repo": "lkmotto/<repo>",
+            "rationale": "why this step now, references concrete signal",
+            "depends_on": []
+          },
+          ...
+        ]
+      }
+    ]
+  }
+
+Hard rules:
+1. Output {} or {"epics": []} if you have nothing high-leverage to propose.
+   Empty is better than mediocre.
+2. Each epic must have 3-8 steps. Single-step epics are not epics.
+3. `kpi_ref` MUST exactly match a KPI title from the KPIs block (it is the
+   text after `### KPI:` or a Tier-0 KPI title). KPIs are organized by repo;
+   pick the KPI that lives in the same repo as the steps you're proposing.
+   If you can't tie an idea to a KPI, drop it.
+4. depends_on contains step.order values; step 1 has no deps.
+5. Be ambitious with scope and concrete with steps. Each step should
+   describe one observable change in one repo.
+6. NEVER mix product lines in one epic. The Motto Appraisal Service fleet
+   (motto-*, rw-order-monitor, appraisalos-*) and the DownTime product
+   line (downtime-*) are separate businesses with separate KPI files. The
+   KPIs you see in this prompt belong to ONE product line; do not propose
+   steps in repos from a different product line.
+7. Tier-0 fleet-wide KPIs may have steps spanning multiple repos in the
+   SAME product line, but each step still lands in exactly one repo.
+"""
+
 LENS_PROMPTS["epic_bundler"] = """You are the epic bundler for the motto stack.
 
 This lens runs AFTER the other lenses. You receive their merged proposals
@@ -311,6 +381,8 @@ DEFAULT_LENSES: tuple[str, ...] = (
 )
 # epic_bundler runs after the others (sequential pass) so it sees their
 # moves; it's NOT in DEFAULT_LENSES (which is the parallel-fanout list).
+# planner is a separate sequential pass that runs heavy-only; see
+# `_run_planner` below.
 
 
 def _snapshot_to_prompt(snapshot: Snapshot) -> str:
@@ -321,12 +393,22 @@ def _user_message(
     snapshot: Snapshot,
     *,
     strategic_intent: str = "",
+    kpis: str = "",
     repo_evidence: str = "",
     upstream_proposals: str = "",
+    open_kpi_epics: str = "",
 ) -> str:
     parts: list[str] = []
     if strategic_intent:
         parts.append(strategic_intent.rstrip() + "\n")
+    if kpis:
+        parts.append(kpis.rstrip() + "\n")
+    if open_kpi_epics:
+        parts.append(
+            "===== OPEN KPI EPICS (skip proposing these) =====\n"
+            + open_kpi_epics.rstrip()
+            + "\n===== END OPEN KPI EPICS =====\n"
+        )
     if repo_evidence:
         parts.append(repo_evidence.rstrip() + "\n")
     if upstream_proposals:
@@ -495,11 +577,161 @@ def _merge_moves(
     return merged_list[:max_total]
 
 
+def _parse_planner_epics(text: str, *, run_id: str) -> list[Epic]:
+    """Coerce the planner's JSON output into a list of validated Epic
+    objects. Drops any epic that fails the basic shape contract.
+    """
+    parsed = _extract_json(text)
+    if not isinstance(parsed, dict):
+        return []
+    raw_list = parsed.get("epics") or []
+    if not isinstance(raw_list, list):
+        return []
+    out: list[Epic] = []
+    for raw in raw_list:
+        if not isinstance(raw, dict):
+            continue
+        title = str(raw.get("title", "")).strip()
+        kpi_ref = str(raw.get("kpi_ref", "")).strip()
+        if not title or not kpi_ref:
+            continue
+        steps_raw = raw.get("steps") or []
+        if not isinstance(steps_raw, list) or not (3 <= len(steps_raw) <= 8):
+            continue
+        steps: list[EpicStep] = []
+        for s in steps_raw:
+            if not isinstance(s, dict):
+                continue
+            try:
+                order = int(s.get("order", 0))
+            except (TypeError, ValueError):
+                order = 0
+            if order < 1:
+                continue
+            depends_raw = s.get("depends_on") or []
+            depends: list[int] = []
+            if isinstance(depends_raw, list):
+                for d in depends_raw:
+                    try:
+                        depends.append(int(d))
+                    except (TypeError, ValueError):
+                        continue
+            steps.append(
+                EpicStep(
+                    order=order,
+                    title=str(s.get("title", "")).strip(),
+                    kind=str(s.get("kind", "spawn_session")).strip()
+                    or "spawn_session",
+                    repo=str(s.get("repo", "")).strip(),
+                    rationale=str(s.get("rationale", "")).strip(),
+                    depends_on=depends,
+                )
+            )
+        if not (3 <= len(steps) <= 8):
+            continue
+        try:
+            est = int(raw.get("estimated_cycles", 0))
+        except (TypeError, ValueError):
+            est = 0
+        out.append(
+            Epic(
+                title=title,
+                kpi_ref=kpi_ref,
+                rationale=str(raw.get("rationale", "")).strip(),
+                estimated_cycles=est,
+                success_criteria=str(raw.get("success_criteria", "")).strip(),
+                steps=steps,
+                run_id=run_id,
+            )
+        )
+    return out
+
+
+async def _run_planner(
+    client: httpx.AsyncClient,
+    *,
+    snapshot: Snapshot,
+    strategic_intent: str,
+    kpis_block: str,
+    repo_evidence: str,
+    api_key: str,
+    model: str,
+    run_id: str,
+) -> dict[str, int]:
+    """Run the planner lens (heavy-only). Inserts proposed epics into the
+    epics table; returns counts dict for logging. Caller decides whether to
+    invoke this based on deep_read level.
+    """
+    if "planner" not in LENS_PROMPTS:
+        return {"skipped": 1}
+
+    open_kpis = sorted(count_open_kpis())
+    open_kpis_text = (
+        "\n".join(f"- {k}" for k in open_kpis) if open_kpis
+        else "(none yet — propose freely)"
+    )
+    user_msg = _user_message(
+        snapshot,
+        strategic_intent=strategic_intent,
+        kpis=kpis_block,
+        repo_evidence=repo_evidence,
+        open_kpi_epics=open_kpis_text,
+    )
+    started = datetime.now(UTC)
+    try:
+        resp = await client.post(
+            f"{DEEPSEEK_BASE_URL}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "max_tokens": 4096,
+                "messages": [
+                    {"role": "system", "content": LENS_PROMPTS["planner"]},
+                    {"role": "user", "content": user_msg},
+                ],
+            },
+            timeout=DEEPSEEK_TIMEOUT_S,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:  # noqa: BLE001
+        _log("orchestrator.planner.error", error=str(exc)[:200])
+        return {"errors": 1}
+
+    latency = int((datetime.now(UTC) - started).total_seconds() * 1000)
+    text = (
+        data.get("choices", [{}])[0]
+        .get("message", {})
+        .get("content", "")
+    )
+    usage = data.get("usage", {}) or {}
+    candidates = _parse_planner_epics(text, run_id=run_id)
+    # Skip epics whose KPI already has an open epic.
+    open_set = set(open_kpis)
+    fresh = [e for e in candidates if e.kpi_ref not in open_set]
+    counts = insert_epics(fresh, run_id=run_id)
+    counts.update(
+        {
+            "parsed": len(candidates),
+            "filtered_kpi_dup": len(candidates) - len(fresh),
+            "latency_ms": latency,
+            "tokens_in": int(usage.get("prompt_tokens", 0) or 0),
+            "tokens_out": int(usage.get("completion_tokens", 0) or 0),
+        }
+    )
+    _log("orchestrator.planner.done", **counts)
+    return counts
+
+
 async def parallel_ideate(
     snapshot: Snapshot,
     *,
     lenses: tuple[str, ...] = DEFAULT_LENSES,
     max_concurrency: int = 5,
+    run_id: str = "",
 ) -> list[NextMove]:
     """Fan out to N lens subagents, merge their proposals.
 
@@ -514,10 +746,15 @@ async def parallel_ideate(
 
     model = DEEPSEEK_DEFAULT_MODEL
 
-    # Load strategic intent + deep-read evidence once, share across lenses.
+    # Load strategic intent + KPIs + deep-read evidence once, share across lenses.
     strategic_intent = format_for_prompt(load_strategic_intent())
+    kpis_block = format_kpis(load_kpis())
+    deep_read_level = ""
     try:
         from director import deep_read
+        deep_read_level = (
+            os.environ.get("DIRECTOR_DEEP_READ_LEVEL", "").strip().lower()
+        )
         repo_evidence = deep_read.gather_evidence(snapshot) if deep_read.is_enabled() else ""
     except Exception as exc:  # noqa: BLE001
         _log("deep_read.failed", error=str(exc)[:300])
@@ -526,6 +763,7 @@ async def parallel_ideate(
     user_msg = _user_message(
         snapshot,
         strategic_intent=strategic_intent,
+        kpis=kpis_block,
         repo_evidence=repo_evidence,
     )
     sem = asyncio.Semaphore(max_concurrency)
@@ -595,7 +833,50 @@ async def parallel_ideate(
         strategic_intent_bytes=len(strategic_intent.encode("utf-8")) if strategic_intent else 0,
     )
 
-    return _merge_moves(results)
+    merged = _merge_moves(results)
+
+    # Planner pass (heavy-only): propose new multi-cycle epics into the
+    # epics table. Doesn't return moves itself; epic_executor handles that
+    # on this and future cycles.
+    if deep_read_level == "heavy":
+        try:
+            async with httpx.AsyncClient() as planner_client:
+                await _run_planner(
+                    planner_client,
+                    snapshot=snapshot,
+                    strategic_intent=strategic_intent,
+                    kpis_block=kpis_block,
+                    repo_evidence=repo_evidence,
+                    api_key=api_key,
+                    model=model,
+                    run_id=run_id,
+                )
+        except Exception as exc:  # noqa: BLE001
+            _log("orchestrator.planner.exception", error=str(exc)[:300])
+
+    # Epic executor (every cycle): pull next step from each active epic
+    # and append to the merged move list. Goes through the same approval
+    # gate; dedupe index protects against double-queueing.
+    try:
+        epic_moves = epic_executor_mod.queue_next_steps()
+    except Exception as exc:  # noqa: BLE001
+        _log("orchestrator.epic_executor.exception", error=str(exc)[:300])
+        epic_moves = []
+    if epic_moves:
+        # Use the same merge rules so duplicates with lens output collapse.
+        synth_result = SubagentResult(
+            lens="epic_executor",
+            moves=epic_moves,
+            tokens_in=0, tokens_out=0, latency_ms=0,
+        )
+        merged = _merge_moves(results + [synth_result])
+        _log(
+            "orchestrator.epic_executor.appended",
+            epic_moves=len(epic_moves),
+            merged_total=len(merged),
+        )
+
+    return merged
 
 
 def is_enabled() -> bool:

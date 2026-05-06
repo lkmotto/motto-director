@@ -241,7 +241,10 @@ async def _run_async() -> int:
             mode = "legacy"
             if orchestrator.is_enabled():
                 try:
-                    raw_moves = await orchestrator.parallel_ideate(snapshot)
+                    raw_moves = await orchestrator.parallel_ideate(
+                        snapshot,
+                        run_id=str(fleet_run.run_id or ""),
+                    )
                     mode = "parallel" if raw_moves else "parallel-empty"
                 except Exception as exc:  # noqa: BLE001
                     _log(

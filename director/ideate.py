@@ -150,6 +150,11 @@ class NextMove:
     priority: int
     intent: str
     code_changes: list[dict[str, str]] = field(default_factory=list)
+    # Epic linkage (set by epic_executor when this move is the next step
+    # of an active multi-cycle epic). Both fields end up in move_payload
+    # so applied_step_orders() can join pending_moves to epics.
+    epic_id: int | None = None
+    step_order: int | None = None
 
 
 def _log(event: str, **fields: object) -> None:
@@ -185,6 +190,18 @@ def _coerce_move(raw: dict) -> NextMove | None:
                 code_changes.append(
                     {"path": str(c["path"]), "content": str(c["content"])}
                 )
+    epic_id_raw = raw.get("epic_id")
+    step_order_raw = raw.get("step_order")
+    try:
+        epic_id_val = int(epic_id_raw) if epic_id_raw is not None else None
+    except (TypeError, ValueError):
+        epic_id_val = None
+    try:
+        step_order_val = (
+            int(step_order_raw) if step_order_raw is not None else None
+        )
+    except (TypeError, ValueError):
+        step_order_val = None
     return NextMove(
         repo=str(raw.get("repo", "")),
         kind=kind,  # type: ignore[arg-type]
@@ -194,6 +211,8 @@ def _coerce_move(raw: dict) -> NextMove | None:
         priority=priority,
         intent=intent,
         code_changes=code_changes,
+        epic_id=epic_id_val,
+        step_order=step_order_val,
     )
 
 
