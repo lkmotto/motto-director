@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime
 
-from director import fleet, policy
+from director import fleet, orchestrator, policy
 from director.act import act, fleet_run_id_var
 from director.concurrency import adaptive_session_limit
 from director.ideate import ideate
@@ -208,7 +208,35 @@ async def _run_async() -> int:
                 run=fleet_run,
             )
 
-            raw_moves = ideate(snapshot)
+            # When DIRECTOR_PARALLEL_SUBAGENTS=1, fan out to N specialized
+            # DeepSeek lenses concurrently and merge their proposals; on
+            # failure (no key, all subagents errored) fall through to the
+            # legacy single-call ideate(). Default mode is legacy until
+            # we've watched the fanout in prod for a few cycles.
+            raw_moves: list = []
+            mode = "legacy"
+            if orchestrator.is_enabled():
+                try:
+                    raw_moves = await orchestrator.parallel_ideate(snapshot)
+                    mode = "parallel" if raw_moves else "parallel-empty"
+                except Exception as exc:  # noqa: BLE001
+                    _log(
+                        "director.orchestrator_failed",
+                        error=str(exc)[:200],
+                    )
+                    raw_moves = []
+            if not raw_moves:
+                raw_moves = ideate(snapshot)
+                if mode == "legacy":
+                    pass
+                else:
+                    mode = "legacy-fallback"
+            _log("director.ideate_mode", mode=mode, raw_moves=len(raw_moves))
+            await event(
+                "ideate.mode",
+                {"mode": mode, "raw_moves": len(raw_moves)},
+                run=fleet_run,
+            )
             moves = policy.filter_moves(raw_moves, snapshot)
             dropped = len(raw_moves) - len(moves)
             _log(
