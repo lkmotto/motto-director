@@ -23,12 +23,42 @@ Optional:
 from __future__ import annotations
 
 import atexit
+import json
 import logging
 import os
+import sys
+import traceback
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def _loud(event_name: str, **fields: Any) -> None:
+    """Emit a structured JSON line on stdout.
+
+    Why not just `logger.warning`? Because Northflank's job log capture is
+    reliable for stdout but the deployed director never calls
+    `logging.basicConfig()`, so logger.warning calls land on the lastResort
+    handler which has been observed to be silently dropped in some
+    container configurations. JSON-on-stdout is what the rest of
+    director.main uses and it is known to reach NF logs.
+    """
+    record = {
+        "ts": datetime.now(UTC).isoformat(),
+        "event": event_name,
+        **fields,
+    }
+    try:
+        print(json.dumps(record, default=str), flush=True)
+    except Exception:
+        # Logging must never raise.
+        try:
+            sys.stdout.write(f"{event_name} {fields}\n")
+            sys.stdout.flush()
+        except Exception:
+            pass
 
 _AGENT_NAME: str | None = None
 _KIND: str = "variable"
@@ -153,6 +183,13 @@ async def register() -> None:
                 },
             )
     except Exception as e:
+        _loud(
+            "observability.register.failed",
+            agent=_AGENT_NAME,
+            error_type=type(e).__name__,
+            error=str(e),
+            traceback=traceback.format_exc(limit=5),
+        )
         logger.warning("fleet register failed: %s", e)
 
 
@@ -165,6 +202,13 @@ async def heartbeat(status: dict[str, Any] | None = None) -> None:
                 "heartbeat", {"agent_name": _AGENT_NAME, "status": status or {}}
             )
     except Exception as e:
+        _loud(
+            "observability.heartbeat.failed",
+            agent=_AGENT_NAME,
+            error_type=type(e).__name__,
+            error=str(e),
+            traceback=traceback.format_exc(limit=5),
+        )
         logger.warning("fleet heartbeat failed: %s", e)
 
 
@@ -212,6 +256,15 @@ async def track_run(kind: str, intent: str | None = None):
                 )
                 handle.run_id = _extract_run_id(resp)
         except Exception as e:
+            _loud(
+                "observability.track_run.record_run_start.failed",
+                agent=_AGENT_NAME,
+                kind=kind,
+                intent=intent,
+                error_type=type(e).__name__,
+                error=str(e),
+                traceback=traceback.format_exc(limit=5),
+            )
             logger.warning("track_run record_run_start failed: %s", e)
 
     status = "success"
@@ -233,6 +286,14 @@ async def track_run(kind: str, intent: str | None = None):
                         },
                     )
             except Exception as e:
+                _loud(
+                    "observability.track_run.record_run_end.failed",
+                    agent=_AGENT_NAME,
+                    run_id=handle.run_id,
+                    error_type=type(e).__name__,
+                    error=str(e),
+                    traceback=traceback.format_exc(limit=5),
+                )
                 logger.warning("track_run record_run_end failed: %s", e)
         if handle._token is not None:
             try:

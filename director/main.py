@@ -156,6 +156,30 @@ def run() -> int:
     gracefully when env vars are unset, so this is safe to ship before
     the MCP server / Neon / Langfuse are provisioned.
     """
+    # Force basicConfig so any module's logger.* output reaches NF stdout.
+    # Without this, library loggers fall through to lastResort (stderr)
+    # which has been observed to be silently dropped in some container
+    # configurations. JSON-on-stdout via `_log` always reaches NF logs;
+    # this just makes other modules' warnings visible too.
+    logging.basicConfig(
+        level=os.environ.get("DIRECTOR_LOG_LEVEL", "INFO"),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        force=True,
+    )
+    # Surface MCP env presence so we can tell at-a-glance whether the
+    # container actually received MOTTO_MCP_URL / MOTTO_MCP_AUTH_TOKEN.
+    # Never log values — only presence + length, so we don't leak.
+    _log(
+        "director.env_snapshot",
+        has_motto_mcp_url=bool(os.environ.get("MOTTO_MCP_URL")),
+        motto_mcp_url_len=len(os.environ.get("MOTTO_MCP_URL") or ""),
+        has_motto_mcp_auth_token=bool(os.environ.get("MOTTO_MCP_AUTH_TOKEN")),
+        motto_mcp_auth_token_len=len(os.environ.get("MOTTO_MCP_AUTH_TOKEN") or ""),
+        has_neon_database_url=bool(os.environ.get("NEON_DATABASE_URL")),
+        has_database_url=bool(os.environ.get("DATABASE_URL")),
+        has_otel_endpoint=bool(os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")),
+        has_otel_headers=bool(os.environ.get("OTEL_EXPORTER_OTLP_HEADERS")),
+    )
     init_observability("motto-director")
     return asyncio.run(_run_async())
 
