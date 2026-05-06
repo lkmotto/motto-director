@@ -459,6 +459,57 @@ def test_call_claude_max_subprocess_success(monkeypatch):
     assert "--dangerously-skip-permissions" in captured_cmd
     sub_env = captured_kwargs.get("env") or {}
     assert sub_env.get("IS_SANDBOX") == "1"
+    # Regression for prod failure observed 2026-05-05 23:58 UTC: the
+    # `motto-core/prd` secret group ships ANTHROPIC_API_KEY for the
+    # anthropic-sdk fallback in the provider chain. Per Anthropic auth
+    # precedence (https://docs.anthropic.com/en/docs/claude-code/iam),
+    # ANTHROPIC_API_KEY beats CLAUDE_CODE_OAUTH_TOKEN in non-interactive
+    # `-p` mode — so without stripping it, the CLI silently routed to the
+    # bare API and returned `result: "Credit balance is too low"` because
+    # the API key has $0 balance. Strip both ANTHROPIC_API_KEY and
+    # ANTHROPIC_AUTH_TOKEN from the subprocess env so the CLI falls
+    # through to the OAuth token and bills the Max subscription.
+    assert "ANTHROPIC_API_KEY" not in sub_env
+    assert "ANTHROPIC_AUTH_TOKEN" not in sub_env
+
+
+def test_call_claude_max_strips_api_key_envs(monkeypatch):
+    """Defense-in-depth: even if both API-key envs are set in the parent
+    process, neither should leak into the claude CLI subprocess. This
+    guards against the `Credit balance is too low` regression from
+    2026-05-05 where the CLI silently routed through the API key."""
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "fake-tok")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake-api-key")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "bearer-fake")
+
+    captured_kwargs: dict = {}
+
+    def fake_run(cmd, **kwargs):  # noqa: ANN001, ANN003
+        captured_kwargs.update(kwargs)
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({
+                "result": '{"moves": []}',
+                "model": "claude-sonnet-4-5",
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            }),
+            stderr="",
+        )
+
+    monkeypatch.setattr("shutil.which", lambda _: "/usr/local/bin/claude")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    ideate_mod._call_claude_max("sys", "user")
+
+    sub_env = captured_kwargs.get("env") or {}
+    assert "ANTHROPIC_API_KEY" not in sub_env, (
+        "ANTHROPIC_API_KEY must be stripped or claude CLI will route through"
+        " the bare API and ignore the Max subscription token."
+    )
+    assert "ANTHROPIC_AUTH_TOKEN" not in sub_env
+    # OAuth token must still be present — it's how the CLI authenticates
+    # to the Max subscription.
+    assert sub_env.get("CLAUDE_CODE_OAUTH_TOKEN") == "fake-tok"
 
 
 def test_call_claude_max_subprocess_nonzero_exit(monkeypatch):

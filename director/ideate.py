@@ -272,6 +272,25 @@ def _call_claude_max(system: str, user_msg: str) -> _ProviderResult:
     # IS_SANDBOX=1 in env to confirm the operator understands they are
     # running in a sandbox-like environment (root container, ephemeral fs).
     sub_env = {**os.environ, "IS_SANDBOX": "1"}
+    # CRITICAL: strip API-key envs from the subprocess env. Per Anthropic
+    # auth precedence (https://docs.anthropic.com/en/docs/claude-code/iam):
+    #   1. cloud provider creds (BEDROCK/VERTEX/FOUNDRY)
+    #   2. ANTHROPIC_AUTH_TOKEN  (LLM gateways)
+    #   3. ANTHROPIC_API_KEY     (direct API; "In non-interactive mode (-p),
+    #                              the key is always used when present.")
+    #   4. apiKeyHelper
+    #   5. CLAUDE_CODE_OAUTH_TOKEN  <- this is what we want
+    #   6. interactive /login
+    # If ANTHROPIC_API_KEY is in env (it is — `motto-core/prd` ships it for
+    # the anthropic-sdk fallback in the provider chain), the CLI silently
+    # routes calls through the bare API. If that key has a $0 balance the
+    # CLI returns `result: "Credit balance is too low"` with tokens_in=0,
+    # tokens_out=0, total_cost_usd=0, exit_code=1. We've been silently
+    # producing zero moves for this exact reason. Strip the API-key envs
+    # so the CLI falls through to CLAUDE_CODE_OAUTH_TOKEN (#5) and bills
+    # the Max subscription instead.
+    sub_env.pop("ANTHROPIC_API_KEY", None)
+    sub_env.pop("ANTHROPIC_AUTH_TOKEN", None)
     try:
         result = subprocess.run(  # noqa: S603
             cmd,
