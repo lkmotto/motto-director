@@ -27,9 +27,7 @@ import json
 import logging
 import os
 import sys
-from dataclasses import asdict
 from datetime import UTC, datetime
-from typing import Iterable
 
 import httpx
 
@@ -110,7 +108,7 @@ def _rank_issues(snapshot: Snapshot) -> list[Issue]:
     issues: list[Issue] = [iss for r in snapshot.repos for iss in r.open_issues]
 
     def score(iss: Issue) -> tuple[int, float]:
-        labels = {l.lower() for l in iss.labels}
+        labels = {lbl.lower() for lbl in iss.labels}
         if labels & {"priority", "high-priority", "claude-task", "director-ok"}:
             return (0, iss.age_hours)
         if "bug" in labels:
