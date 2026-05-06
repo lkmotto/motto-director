@@ -19,7 +19,7 @@ RUN apt-get update \
 
 RUN pip install --no-cache-dir uv
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md motto-strategy.md ./
 COPY director ./director
 
 RUN uv pip install --system .
