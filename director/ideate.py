@@ -48,11 +48,20 @@ MoveKind = Literal[
     "merge_pr",
     "nudge_pipeline",
     "compound_pr",
+    "file_critique_issue",
     "noop",
 ]
 
 _VALID_KINDS: frozenset[str] = frozenset(
-    ("spawn_session", "file_issue", "merge_pr", "nudge_pipeline", "compound_pr", "noop")
+    (
+        "spawn_session",
+        "file_issue",
+        "merge_pr",
+        "nudge_pipeline",
+        "compound_pr",
+        "file_critique_issue",
+        "noop",
+    )
 )
 
 # OpenAI-compatible providers. Each entry: (key_env, default_model_env,

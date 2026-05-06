@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime
 
-from director import fleet, orchestrator, policy, queue
+from director import critic, fleet, orchestrator, policy, queue
 from director.act import act, fleet_run_id_var
 from director.concurrency import adaptive_session_limit
 from director.ideate import ideate
@@ -237,6 +237,32 @@ async def _run_async() -> int:
                 {"mode": mode, "raw_moves": len(raw_moves)},
                 run=fleet_run,
             )
+
+            # Output critic lens — runs alongside the orchestrator. It
+            # operates on stored artifacts (not the snapshot), so it can
+            # always run when enabled regardless of the ideate path.
+            # Default OFF (DIRECTOR_OUTPUT_CRITIC) until rolled out.
+            if critic.is_enabled():
+                try:
+                    critic_moves = await critic.critique_artifacts()
+                    if critic_moves:
+                        raw_moves = list(raw_moves) + list(critic_moves)
+                        _log(
+                            "director.critic.appended",
+                            critic_moves=len(critic_moves),
+                            total_raw_moves=len(raw_moves),
+                        )
+                        await event(
+                            "critic.appended",
+                            {"critic_moves": len(critic_moves)},
+                            run=fleet_run,
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    _log(
+                        "director.critic_failed",
+                        error=str(exc)[:200],
+                    )
+
             moves = policy.filter_moves(raw_moves, snapshot)
             dropped = len(raw_moves) - len(moves)
             _log(

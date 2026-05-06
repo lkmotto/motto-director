@@ -143,6 +143,39 @@ def _file_issue(client: httpx.Client, move: NextMove) -> ActResult:
     return ActResult(move=move, status="executed", detail=r.json().get("html_url", ""))
 
 
+def _file_critique_issue(client: httpx.Client, move: NextMove) -> ActResult:
+    """File a GitHub issue against the source repo of a flagged/blocked
+    artifact. Distinguished from `_file_issue` by the explicit
+    `output-critic` label so producing teams can filter and so the
+    director can later report critic-driven activity separately.
+
+    `move.rationale` is expected to contain the critic's structured
+    findings (verdict, severity, issues list, suggested fix). The
+    producing agent / artifact id are encoded in the title and intent.
+    """
+    body = (
+        f"**Critic verdict:** {move.intent}\n\n"
+        f"**Findings:**\n{move.rationale}\n\n"
+        "_Filed by motto-director output_critic lens._"
+    )
+    r = client.post(
+        f"{GITHUB_API}/repos/{move.repo}/issues",
+        headers=_gh_headers(),
+        json={
+            "title": move.title,
+            "body": body,
+            "labels": ["output-critic"],
+        },
+    )
+    if r.status_code >= 300:
+        return ActResult(
+            move=move, status="error", detail=f"{r.status_code} {r.text}"
+        )
+    return ActResult(
+        move=move, status="executed", detail=r.json().get("html_url", "")
+    )
+
+
 def _spawn_session(
     client: httpx.Client, move: NextMove, snapshot: Snapshot
 ) -> ActResult:
@@ -432,6 +465,8 @@ def act(
             try:
                 if move.kind == "file_issue":
                     results.append(_file_issue(client, move))
+                elif move.kind == "file_critique_issue":
+                    results.append(_file_critique_issue(client, move))
                 elif move.kind == "spawn_session":
                     results.append(_spawn_session(client, move, snapshot))
                 elif move.kind == "merge_pr":
