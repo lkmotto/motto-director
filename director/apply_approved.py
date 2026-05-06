@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 
 from director import queue
 from director.act import act
+from director.observability import event
 from director.perceive import perceive
 
 
@@ -44,16 +45,43 @@ def _max_per_run() -> int:
 
 
 async def _async_main() -> int:
+    # Emit entry beacon so we can prove the drain ran in fleet.events
+    # (stdout-only logs are invisible from cockpit/Telegram).
+    try:
+        await event("apply.entered", {"max": _max_per_run()})
+    except Exception:  # noqa: BLE001
+        pass
+
     if not queue.is_configured():
         _log("apply.skipped", reason="no_dsn")
+        try:
+            await event("apply.skipped", {"reason": "no_dsn"})
+        except Exception:  # noqa: BLE001
+            pass
         return 0
 
     rows = queue.list_by_status("approved", limit=_max_per_run())
     if not rows:
         _log("apply.empty")
+        try:
+            await event("apply.empty", {})
+        except Exception:  # noqa: BLE001
+            pass
         return 0
 
-    snapshot = await perceive()
+    # Perceive can be flaky (rate-limits, MCP hiccups). Don't let it
+    # nuke the entire drain — degrade to an empty snapshot so noop /
+    # file_issue / merge_pr rows can still terminate.
+    try:
+        snapshot = await perceive()
+    except Exception as exc:  # noqa: BLE001
+        _log("apply.perceive_failed", error=str(exc)[:200])
+        try:
+            await event("apply.perceive_failed", {"error": str(exc)[:200]}, level="warn")
+        except Exception:  # noqa: BLE001
+            pass
+        from director.perceive import Snapshot  # local import to avoid cycle
+        snapshot = Snapshot(captured_at=datetime.now(UTC).isoformat(), repos=[])
     moves = []
     id_for_move: dict[int, int] = {}
     for row in rows:
@@ -71,6 +99,7 @@ async def _async_main() -> int:
     results = act(moves, snapshot, top_n=len(moves))
     applied = 0
     failed = 0
+    skipped = 0
     for r in results:
         row_id = id_for_move.get(id(r.move))
         if row_id is None:
@@ -78,17 +107,36 @@ async def _async_main() -> int:
         if r.status == "executed":
             queue.mark_applied(row_id, detail=r.detail or "")
             applied += 1
+        elif r.status == "skipped" and r.move.kind == "noop":
+            # noop has nothing to execute by definition. Terminate the
+            # row so it doesn't sit in 'approved' forever blocking the
+            # autonomy demo. The detail field preserves the trace.
+            queue.mark_applied(row_id, detail=r.detail or "noop")
+            applied += 1
         elif r.status in ("dry_run", "skipped"):
-            # Don't terminate the row — leave it approved so the next
+            # Real dry-run gating — leave the row approved so the next
             # apply run picks it up when the dry-run flag is off.
-            pass
+            skipped += 1
         else:
             queue.mark_failed(row_id, detail=f"{r.status}: {r.detail}")
             failed += 1
 
-    _log("apply.done", applied=applied, failed=failed,
+    _log("apply.done", applied=applied, failed=failed, skipped=skipped,
          total=len(results), moves=[asdict(m) for m in moves])
-    return 0
+    try:
+        await event(
+            "apply.done",
+            {
+                "applied": applied,
+                "failed": failed,
+                "skipped": skipped,
+                "total": len(results),
+                "move_ids": list(id_for_move.values()),
+            },
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    return applied
 
 
 def run() -> int:
