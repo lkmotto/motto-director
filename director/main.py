@@ -320,7 +320,7 @@ async def _run_async() -> int:
                 # Human-in-the-loop: queue rows for cockpit/Telegram approval
                 # instead of executing. The apply_approved_moves job (or a
                 # future tick run with manual_mode off) drains approved rows.
-                qcounts = queue.enqueue_moves(moves, run_id=fleet_run.id)
+                qcounts = queue.enqueue_moves(moves, run_id=fleet_run.run_id)
                 _log(
                     "director.queued",
                     queued=qcounts.get("queued", 0),
