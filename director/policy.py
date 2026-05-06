@@ -199,9 +199,22 @@ def _disabled_kinds() -> set[str]:
     return {p.strip() for p in raw.split(",") if p.strip()}
 
 
-def filter_moves(moves: list[NextMove], snapshot: Snapshot) -> list[NextMove]:
+def filter_moves(
+    moves: list[NextMove],
+    snapshot: Snapshot,
+    *,
+    manual_mode: bool = False,
+) -> list[NextMove]:
     """Apply scoping rules. Drop moves that fail eligibility; emit a
-    `policy.decision` log line per drop with rationale."""
+    `policy.decision` log line per drop with rationale.
+
+    When `manual_mode=True`, bypass eligibility gates that exist purely as
+    auto-execution safeguards (e.g. `director-ok` label, CI-green for merge).
+    The human reviewing the queue IS the safety gate. Still enforces:
+      - DIRECTOR_DISABLED_KINDS env override
+      - prompt-scope size limit (MAX_FILES_PER_SESSION)
+      - self-modification gate (DIRECTOR_ALLOW_SELF_MOD)
+    """
     disabled = _disabled_kinds()
     kept: list[NextMove] = []
     for move in moves:
@@ -215,7 +228,7 @@ def filter_moves(moves: list[NextMove], snapshot: Snapshot) -> list[NextMove]:
                 reason="kind disabled by DIRECTOR_DISABLED_KINDS env",
             )
             continue
-        eligible, reason = _evaluate(move, snapshot)
+        eligible, reason = _evaluate(move, snapshot, manual_mode=manual_mode)
         if eligible:
             kept.append(move)
             continue
@@ -230,15 +243,21 @@ def filter_moves(moves: list[NextMove], snapshot: Snapshot) -> list[NextMove]:
     return kept
 
 
-def _evaluate(move: NextMove, snapshot: Snapshot) -> tuple[bool, str]:
+def _evaluate(
+    move: NextMove,
+    snapshot: Snapshot,
+    *,
+    manual_mode: bool = False,
+) -> tuple[bool, str]:
     if move.kind == "spawn_session":
-        target: Issue | PullRequest | None = _find_issue(
-            snapshot, move.repo, move.title
-        ) or _find_pr(snapshot, move.repo, move.title)
-        if target is not None:
-            ok, reason = is_eligible_for_spawn(target)
-            if not ok:
-                return False, reason
+        if not manual_mode:
+            target: Issue | PullRequest | None = _find_issue(
+                snapshot, move.repo, move.title
+            ) or _find_pr(snapshot, move.repo, move.title)
+            if target is not None:
+                ok, reason = is_eligible_for_spawn(target)
+                if not ok:
+                    return False, reason
         # Even with a labelled target (or no resolvable target), reject
         # prompts that look like multi-file refactors — those are the
         # bandwidth wasters this whole module exists to stop.
@@ -251,6 +270,10 @@ def _evaluate(move: NextMove, snapshot: Snapshot) -> tuple[bool, str]:
         pr = _find_pr(snapshot, move.repo, move.title)
         if pr is None:
             return False, "PR not found in snapshot"
+        if manual_mode:
+            # Human reviews + clicks merge in cockpit; CI/approvals are
+            # signals shown in the UI, not hard gates here.
+            return True, "ok (manual mode)"
         return is_eligible_for_auto_merge(pr, pr.ci_status)
 
     if move.kind == "compound_pr":
