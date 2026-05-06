@@ -1,0 +1,67 @@
+name: sync-doppler-to-northflank
+
+# Durable Doppler → Northflank sync.
+#
+# Replaces the laptop-bound `doppler_to_northflank.sh` ritual + the
+# dangerous single-key sync workflows (sync-neon-secret.yml,
+# sync-deepseek-secret.yml, restore-core-secrets.yml). Those are
+# scheduled for deletion once this is verified working.
+#
+# Triggers:
+#   - workflow_dispatch (manual button — supports DRY_RUN)
+#   - repository_dispatch event_type=doppler-sync (Doppler webhook → GHA)
+#   - schedule: nightly safety-net cron at 09:00 UTC (4am CT)
+#
+# Required repo secrets:
+#   - DOPPLER_TOKEN_MOTTO_CORE_PRD : Doppler service token (read-only,
+#     pre-scoped to motto-core/prd; create at
+#     https://dashboard.doppler.com/workplace/.../projects/motto-core/configs/prd
+#     → Access → Service Tokens → Generate)
+#   - NORTHFLANK_API_KEY (or NORTHFLANK_API as fallback)
+#
+# Safety:
+#   - sync_doppler_to_northflank.py does GET → diff → full PATCH
+#   - never partial; never single-key; refuses to PATCH if merged set
+#     drops below MIN_KEYS_FLOOR (15).
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run (no PATCH; just print diff)"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+  repository_dispatch:
+    types: [doppler-sync]
+  schedule:
+    # 09:00 UTC = 04:00 CDT / 03:00 CST
+    - cron: "0 9 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: doppler-northflank-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run sync
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_MOTTO_CORE_PRD }}
+          NORTHFLANK_API_KEY: ${{ secrets.NORTHFLANK_API_KEY || secrets.NORTHFLANK_API }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+        run: |
+          python scripts/sync_doppler_to_northflank.py
