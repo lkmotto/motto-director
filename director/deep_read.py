@@ -32,6 +32,7 @@ from datetime import UTC, datetime
 import httpx
 
 from director.perceive import GITHUB_API, Issue, PullRequest, Snapshot, _gh_headers
+from director.repo_cache import get_cache
 
 logger = logging.getLogger("director.deep_read")
 
@@ -178,7 +179,16 @@ def _fetch_issue_body(client: httpx.Client, repo: str, number: int) -> str:
 def _fetch_file(
     client: httpx.Client, repo: str, path: str, ref: str = "main",
 ) -> str:
-    """Fetch a file's raw content from main."""
+    """Read a file from the local repo cache (shallow blobless clone).
+
+    Falls back to GitHub REST contents API if the cache read returns empty
+    (clone failed, file not present, etc.). The REST fallback preserves
+    backwards compatibility but in steady state should be rare.
+    """
+    cached = get_cache().read_file(repo, path, max_bytes=FILE_MAX_BYTES)
+    if cached:
+        return _truncate(cached, FILE_MAX_BYTES)
+    # Fallback: REST contents API.
     url = f"{GITHUB_API}/repos/{repo}/contents/{path}?ref={ref}"
     headers = _gh_headers()
     headers["Accept"] = "application/vnd.github.v3.raw"
@@ -194,6 +204,13 @@ def _fetch_file(
 def _fetch_recent_commits(
     client: httpx.Client, repo: str, n: int = 10,
 ) -> list[dict[str, str]]:
+    """Read recent commits from the local cache (git log).
+
+    Falls back to GitHub REST commits API if the cache read returns empty.
+    """
+    cached = get_cache().recent_commits(repo, n=n)
+    if cached:
+        return cached
     url = f"{GITHUB_API}/repos/{repo}/commits?per_page={n}"
     try:
         resp = client.get(url, headers=_gh_headers(), timeout=DEEP_READ_TIMEOUT_S)
@@ -224,6 +241,25 @@ def gather_evidence(snapshot: Snapshot) -> str:
     budget = _budget(level)
     started = datetime.now(UTC)
     sections: list[str] = []
+
+    # Pre-fetch / refresh the local clones for every repo we'll read from.
+    # This converts dozens of REST contents calls into one git pull per
+    # repo. Failures here are non-fatal; _fetch_file falls back to REST.
+    if budget.get("claude_md", 0) or budget.get("readmes", 0) or budget.get("commits", 0):
+        try:
+            cache = get_cache()
+            slugs = [r.repo for r in snapshot.repos]
+            if slugs:
+                stats = cache.ensure_many(slugs)
+                _log(
+                    "deep_read.cache_warmed",
+                    cloned=stats.cloned,
+                    pulled=stats.pulled,
+                    failed=stats.failed,
+                    repos=len(slugs),
+                )
+        except Exception as exc:  # noqa: BLE001
+            _log("deep_read.cache_warm_failed", error=str(exc)[:200])
 
     with httpx.Client(timeout=DEEP_READ_TIMEOUT_S) as client:
         # PR diffs (top N by signal)
