@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime
 
-from director import fleet, orchestrator, policy
+from director import fleet, orchestrator, policy, queue
 from director.act import act, fleet_run_id_var
 from director.concurrency import adaptive_session_limit
 from director.ideate import ideate
@@ -266,33 +266,61 @@ async def _run_async() -> int:
                 run=fleet_run,
             )
 
-            results = act(moves, snapshot)
-            executed = 0
-            for r in results:
+            if queue.manual_mode_enabled():
+                # Human-in-the-loop: queue rows for cockpit/Telegram approval
+                # instead of executing. The apply_approved_moves job (or a
+                # future tick run with manual_mode off) drains approved rows.
+                qcounts = queue.enqueue_moves(moves, run_id=fleet_run.id)
                 _log(
-                    "director.acted",
-                    kind=r.move.kind,
-                    repo=r.move.repo,
-                    title=r.move.title,
-                    priority=r.move.priority,
-                    status=r.status,
-                    detail=r.detail,
+                    "director.queued",
+                    queued=qcounts.get("queued", 0),
+                    deduped=qcounts.get("deduped", 0),
+                    errors=qcounts.get("errors", 0),
+                    moves=[asdict(m) for m in moves],
                 )
-                if r.status == "executed":
-                    executed += 1
+                await event(
+                    "queued",
+                    {
+                        "queued": qcounts.get("queued", 0),
+                        "deduped": qcounts.get("deduped", 0),
+                        "errors": qcounts.get("errors", 0),
+                    },
+                    run=fleet_run,
+                )
+                executed = 0
+                fleet_run.summary["approval_mode"] = "manual"
+                fleet_run.summary["queued"] = qcounts.get("queued", 0)
+                fleet_run.summary["deduped"] = qcounts.get("deduped", 0)
+            else:
+                results = act(moves, snapshot)
+                executed = 0
+                for r in results:
+                    _log(
+                        "director.acted",
+                        kind=r.move.kind,
+                        repo=r.move.repo,
+                        title=r.move.title,
+                        priority=r.move.priority,
+                        status=r.status,
+                        detail=r.detail,
+                    )
+                    if r.status == "executed":
+                        executed += 1
+                fleet_run.summary["approval_mode"] = "auto"
+                await event(
+                    "acted",
+                    {"executed": executed, "total": len(results)},
+                    run=fleet_run,
+                )
 
             fleet_run.summary["repos"] = len(snapshot.repos)
             fleet_run.summary["moves"] = len(moves)
             fleet_run.summary["executed"] = executed
             fleet_run.summary["dropped_by_policy"] = dropped
             fleet_run.summary["session_limit"] = session_limit
-            await event(
-                "acted",
-                {"executed": executed, "total": len(results)},
-                run=fleet_run,
-            )
 
-            _log("director.done", executed=executed)
+            _log("director.done", executed=executed,
+                 mode=fleet_run.summary.get("approval_mode", "auto"))
 
     return 0
 
