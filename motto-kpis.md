@@ -55,28 +55,28 @@ land in exactly one repo.
 
 ## Per-repo KPIs (Motto Appraisal Service fleet)
 
-### Repo: motto-director
+## Repo: motto-director
 *Self-aware orchestrator: perceives the fleet, ideates moves, gates approvals.*
 
-#### KPI: Director moves applied per week
+### KPI: Director moves applied per week
 - **target**: ≥ 30 approved+applied moves / week (sustained autonomous output)
 - **current**: ~1 (Luke rejected id=1; rest in pending awaiting review)
 - **leading indicator**: pending → approved conversion rate ≥ 60%
 - **why it matters**: this is "labor utilization." If approvals don't flow, the fleet is idle.
 
-#### KPI: Active epics in flight
+### KPI: Active epics in flight
 - **target**: 3 active multi-cycle epics, each closing within ≤ 5 cycles after open
 - **current**: 0 (this file + the planner ship in PR #58)
 - **leading indicator**: epic close rate, average cycles-to-close
 - **why it matters**: forces the director to think in projects, not chores.
 
-#### KPI: Median PR time-to-merge across motto-* repos
+### KPI: Median PR time-to-merge across motto-* repos
 - **target**: < 24 hours for any PR with green CI + 1 review
 - **current**: several PRs > 285 hours stale (#1, #3, #4, #5)
 - **owner-lens**: stale_pr_closer + auto-merge gate when label present
 - **why it matters**: stale PRs are unrealized value rotting on the vine.
 
-#### KPI: CI green rate across motto-* repos
+### KPI: CI green rate across motto-* repos
 - **target**: ≥ 95% on `main`, last 10 runs per repo
 - **current**: not measured
 - **owner-lens**: ci_doctor
@@ -84,49 +84,49 @@ land in exactly one repo.
 
 ---
 
-### Repo: motto-sdr-agent
+## Repo: motto-sdr-agent
 *Autonomous outbound: Apollo autopilot, Lavender-scored cold email, voice follow-up.*
 
-#### KPI: Outbound email sends per day (warmed mailboxes)
+### KPI: Outbound email sends per day (warmed mailboxes)
 - **target**: 100–200 sends / day, sustained
 - **current**: capacity exists but not consistently hitting target
 - **leading indicator**: per-mailbox deliverability score, daily quota utilization
 - **why it matters**: top of the AMC + lender funnel.
 
-#### KPI: Cold email reply rate
+### KPI: Cold email reply rate
 - **target**: ≥ 5% reply, ≥ 1% positive reply
 - **current**: not instrumented
 - **leading indicator**: subject-line A/B winners, persona match score
 - **why it matters**: volume without replies is wasted spend.
 
-#### KPI: AMC applications submitted per week
+### KPI: AMC applications submitted per week
 - **target**: ≥ 5 / week
 - **current**: ~0–1 (manual)
 - **leading indicator**: prospects researched, applications ready in queue
 - **why it matters**: feeds Tier-0 AMC panel KPI directly.
 
-#### KPI: Apollo CRM data freshness
+### KPI: Apollo CRM data freshness
 - **target**: ≥ 95% of contacts have last_enriched_at within 30 days
 - **current**: not measured
 - **why it matters**: stale enrichment → wrong personalization → worse replies.
 
 ---
 
-### Repo: motto-appraisal-pipeline
+## Repo: motto-appraisal-pipeline
 *Order intake → comp hunt → report production → delivery.*
 
-#### KPI: Orders processed end-to-end without human touch
+### KPI: Orders processed end-to-end without human touch
 - **target**: ≥ 50% of orders auto-progress past comp-selection without manual gate
 - **current**: 0% (pipeline is HTTP `/tick` driven; manual gates dominate)
 - **leading indicator**: gate-pass rate at each stage (intake, comps, value reconciliation)
 - **why it matters**: this is the labor savings the whole stack exists for.
 
-#### KPI: Median order intake → first comp set time
+### KPI: Median order intake → first comp set time
 - **target**: ≤ 30 minutes
 - **current**: not measured
 - **why it matters**: time-to-first-comp is the user-perceptible speed of the service.
 
-#### KPI: Pipeline tick failure rate
+### KPI: Pipeline tick failure rate
 - **target**: ≤ 2% of `/tick` calls error
 - **current**: not measured (need NF + Langfuse cross-join)
 - **owner-lens**: cost_watchdog + ci_doctor
@@ -134,20 +134,20 @@ land in exactly one repo.
 
 ---
 
-### Repo: motto-mcp-server
+## Repo: motto-mcp-server
 *FastMCP host: every agent's tool surface (Sheets, CRM, lead gen, fleet events).*
 
-#### KPI: MCP tool contract test coverage
+### KPI: MCP tool contract test coverage
 - **target**: 100% of public tools have a contract test asserting input/output schema
 - **current**: not instrumented
 - **why it matters**: agents calling agents must not silently break.
 
-#### KPI: MCP server uptime (HTTP /health)
+### KPI: MCP server uptime (HTTP /health)
 - **target**: ≥ 99.5% measured by external prober
 - **current**: not measured
 - **why it matters**: it's a single point of failure for the fleet.
 
-#### KPI: CLAUDE.md present and ≤ 30 days old
+### KPI: CLAUDE.md present and ≤ 30 days old
 - **target**: yes (currently flagged missing by deep-read)
 - **current**: missing
 - **owner-lens**: opportunity_scout
@@ -155,15 +155,15 @@ land in exactly one repo.
 
 ---
 
-### Repo: motto-social-agent
+## Repo: motto-social-agent
 *Autonomous LinkedIn / Instagram / Facebook posting.*
 
-#### KPI: Posts shipped per week
+### KPI: Posts shipped per week
 - **target**: ≥ 5 posts / week across the 3 platforms (sustained)
 - **current**: not measured
 - **why it matters**: brand impressions feed Tier-0 panel acceptance probability.
 
-#### KPI: Engagement rate (likes+comments / impressions)
+### KPI: Engagement rate (likes+comments / impressions)
 - **target**: ≥ 2% on LinkedIn (industry baseline ~1.5%)
 - **current**: not instrumented
 - **leading indicator**: hook variant performance, post-time A/B
@@ -171,45 +171,45 @@ land in exactly one repo.
 
 ---
 
-### Repo: motto-video-agent
+## Repo: motto-video-agent
 *Long-form YouTube assembly: Kling 2.6 + ElevenLabs + FFmpeg.*
 
-#### KPI: Videos published per month
+### KPI: Videos published per month
 - **target**: ≥ 4 / month (one per week)
 - **current**: not measured
 - **why it matters**: YouTube watch-time compounds; this is the slowest-but-stickiest channel.
 
-#### KPI: Average video production cost
+### KPI: Average video production cost
 - **target**: ≤ $3 in API spend per finished video
 - **current**: not measured (Kling + ElevenLabs costs not aggregated)
 - **why it matters**: the only video pipeline that can be run weekly without bleeding cash.
 
 ---
 
-### Repo: motto-shortform
+## Repo: motto-shortform
 *FORGE — programmatic short-form video pipeline (Reels, TikTok, Shorts).*
 
-#### KPI: Shorts shipped per week across platforms
+### KPI: Shorts shipped per week across platforms
 - **target**: ≥ 7 / week (one per day cadence across 3 platforms)
 - **current**: not measured
 - **why it matters**: short-form is the highest-velocity discovery channel.
 
-#### KPI: Hook performance scoring instrumented
+### KPI: Hook performance scoring instrumented
 - **target**: 100% of shorts get an A/B-able hook variant + 24h retention measurement
 - **current**: not instrumented
 - **why it matters**: without measurement, we can't iterate on what wins.
 
 ---
 
-### Repo: motto-distribution
+## Repo: motto-distribution
 *Multi-platform content fanout: LinkedIn + X + Reddit + Beehiiv + Facebook Groups.*
 
-#### KPI: Distribution coverage per piece of content
+### KPI: Distribution coverage per piece of content
 - **target**: ≥ 5 platforms touched per piece automatically
 - **current**: not measured
 - **why it matters**: amortizes content production cost across reach.
 
-#### KPI: Posting failure rate
+### KPI: Posting failure rate
 - **target**: ≤ 5% of scheduled posts fail
 - **current**: not measured
 - **owner-lens**: ci_doctor + cost_watchdog
@@ -217,90 +217,90 @@ land in exactly one repo.
 
 ---
 
-### Repo: motto-fleet-burn-rate-tracker
+## Repo: motto-fleet-burn-rate-tracker
 *Daily fleet cost aggregation (NF + DO + Cloudflare + LLM providers).*
 
-#### KPI: Cost data freshness
+### KPI: Cost data freshness
 - **target**: every agent has a daily cost row, < 24h old
 - **current**: partial (LLM via Langfuse; NF/DO not yet wired)
 - **why it matters**: blind to spend → no defense against runaway costs.
 
-#### KPI: Anomaly detection coverage
+### KPI: Anomaly detection coverage
 - **target**: alert when any agent's 24h spend > 2× its 7-day median
 - **current**: not implemented
 - **why it matters**: a stuck loop should page Telegram in minutes, not days.
 
 ---
 
-### Repo: motto-finance-tracker
+## Repo: motto-finance-tracker
 *Plaid sync + bank reconciliation + invoice tracking for the appraisal business.*
 
-#### KPI: Plaid transactions synced lag
+### KPI: Plaid transactions synced lag
 - **target**: < 24h between bank settlement and tracker row
 - **current**: not measured
 - **why it matters**: cash-flow visibility powers every "should we scale ads?" decision.
 
 ---
 
-### Repo: motto-appraisal-cockpit
+## Repo: motto-appraisal-cockpit
 *Human-in-the-loop web cockpit: order submission, automation-gate timeline, director approvals.*
 
-#### KPI: Director pending → approved median latency
+### KPI: Director pending → approved median latency
 - **target**: ≤ 4 hours during waking hours (10am–3am CT)
 - **current**: 285+ hours on initial backlog (Luke catching up)
 - **why it matters**: the cockpit is the fleet's bottleneck. Slow approval = idle agents.
 
-#### KPI: Cockpit views with active human-task list
+### KPI: Cockpit views with active human-task list
 - **target**: 100% of pending agent decisions have a one-click cockpit action
 - **current**: ~80% (director pending list yes; per-agent gates partial)
 - **why it matters**: any approval that requires a CLI is a paper jam.
 
 ---
 
-### Repo: motto-credential-grabber
+## Repo: motto-credential-grabber
 *Ephemeral credential rotator: rotates fleet API keys, writes to Doppler.*
 
-#### KPI: Stale credentials in Doppler
+### KPI: Stale credentials in Doppler
 - **target**: 0 secrets in `motto-core/prd` older than rotation policy (90 days for most)
 - **current**: not measured
 - **why it matters**: rotated keys = blast-radius reduction.
 
 ---
 
-### Repo: motto-outreach
+## Repo: motto-outreach
 *Reddit + X outreach for Motto.*
 
-#### KPI: Outreach replies opened by humans
+### KPI: Outreach replies opened by humans
 - **target**: ≥ 10 / week qualified handoffs to Luke
 - **current**: not measured
 - **why it matters**: organic outreach is unpaid TOFU.
 
 ---
 
-### Repo: motto-linkedin-ads
+## Repo: motto-linkedin-ads
 *LinkedIn paid: engagement scoring, TLA briefs, CAC tracking.*
 
-#### KPI: Blended CAC for AMC + lender leads
+### KPI: Blended CAC for AMC + lender leads
 - **target**: ≤ $200 per qualified AMC contact
 - **current**: not measured
 - **why it matters**: CAC must be < LTV to scale paid spend.
 
 ---
 
-### Repo: rw-order-monitor
+## Repo: rw-order-monitor
 *Renters Warehouse Gmail watcher (recurring AMC).*
 
-#### KPI: RW orders captured / actual RW orders sent
+### KPI: RW orders captured / actual RW orders sent
 - **target**: ≥ 99% (zero misses)
 - **current**: not instrumented (no ground truth feed)
 - **why it matters**: a missed order = lost revenue + reputation hit with RW.
 
 ---
 
-### Repo: appraisalos-bidding
+## Repo: appraisalos-bidding
 *AppraisalOS auto-bid daemon (DigitalOcean).*
 
-#### KPI: Bids placed within order TTL
+### KPI: Bids placed within order TTL
 - **target**: ≥ 95% of eligible orders get a bid before expiry
 - **current**: not measured
 - **why it matters**: a missed bid is a missed order.

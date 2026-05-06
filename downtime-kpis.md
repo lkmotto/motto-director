@@ -11,6 +11,8 @@ business KPIs with the appraisal service.
 
 > Edit current/target values here as you measure. The planner uses the gap
 > (target − current) to prioritize which DownTime epic to propose first.
+> Every KPI gets its own `### KPI: <title>` heading — that's the exact
+> string the planner must write into `kpi_ref`.
 
 ---
 
@@ -46,62 +48,107 @@ them; the ingestion + email + backend agents combine to move them.
 
 ## Per-repo KPIs (DownTime fleet)
 
-### Repo: downtime-event-agent
+## Repo: downtime-event-agent
 Crawls public event feeds (Eventbrite, city calendars, venue sites) and
 writes normalized events into the DownTime Postgres.
 
-- **events ingested per week**: target ≥ 200 (current TBD)
-- **dedup rate**: target ≥ 95 % unique after canonicalization
-  (title+venue+start_time hash)
-- **ingestion run failure rate**: target < 5 % of scheduled runs error
-- **CLAUDE.md present + up to date**: target = yes
-- **why these**: ingestion is the top of the funnel. If it's flaky or
-  duplicative, the email digest looks empty or repetitive.
+### KPI: Events ingested per week (downtime-event-agent)
+- **target**: ≥ 200 / week
+- **current**: TBD
+- **why**: ingestion is the top of the funnel. Thin ingestion = thin digest.
 
-### Repo: downtime-email-agent
+### KPI: Event dedup rate (downtime-event-agent)
+- **target**: ≥ 95 % unique after canonicalization (title+venue+start_time hash)
+- **current**: TBD
+- **why**: duplicates make the digest look lazy and repetitive.
+
+### KPI: Ingestion run failure rate (downtime-event-agent)
+- **target**: < 5 % of scheduled runs error
+- **current**: TBD
+- **why**: a flaky ingestor compounds: missed events on Tuesday show up as
+  a hollow digest on Friday.
+
+## Repo: downtime-email-agent
 Renders the Friday 8am DFW weekend digest from Postgres and ships via
 Mailgun/Resend.
 
-- **send success rate**: target ≥ 99 % of subscribers receive Friday email
-- **render time**: target < 30 s end-to-end (query → HTML → send)
-- **bounce rate**: target ≤ 2 % (deliverability hygiene)
-- **unsubscribe rate per send**: target ≤ 0.5 %
-- **why these**: this is the customer-visible artifact. Anything broken
-  here destroys subscriber trust faster than ingestion gaps do.
+### KPI: Friday digest send success rate (downtime-email-agent)
+- **target**: ≥ 99 % of subscribers receive the Friday email
+- **current**: TBD
+- **why**: this is the customer-visible artifact; missed sends destroy
+  subscriber trust faster than ingestion gaps do.
 
-### Repo: downtime-backend
+### KPI: Email render end-to-end time (downtime-email-agent)
+- **target**: < 30 s from query → HTML → send dispatch
+- **current**: TBD
+- **why**: long render times stack up under load; we want headroom.
+
+### KPI: Email bounce rate (downtime-email-agent)
+- **target**: ≤ 2 % (Mailgun deliverability hygiene)
+- **current**: TBD
+- **why**: high bounces poison sender reputation across the whole list.
+
+### KPI: Unsubscribe rate per send (downtime-email-agent)
+- **target**: ≤ 0.5 %
+- **current**: TBD
+- **why**: spike here = digest content drifted from what subscribers signed
+  up for; investigate before scaling list growth.
+
+## Repo: downtime-backend
 The Postgres + API layer that powers both ingestion writes and email reads.
 
-- **API uptime**: target 99.9 % monthly
-- **median read latency**: target < 100 ms for /events queries
-- **schema migration safety**: target = zero broken deploys (every
-  migration is reversible + tested in staging first)
-- **why these**: backend stability lets the other two agents run without
-  retry storms. Latency matters for the iOS app reading live events.
+### KPI: API uptime (downtime-backend)
+- **target**: 99.9 % monthly
+- **current**: TBD
+- **why**: backend stability lets the other two agents run without retry storms.
 
-### Repo: downtime-app
+### KPI: Median /events read latency (downtime-backend)
+- **target**: < 100 ms
+- **current**: TBD
+- **why**: slow reads hurt the iOS app's perceived snappiness.
+
+### KPI: Schema migration safety (downtime-backend)
+- **target**: zero broken deploys (every migration reversible + staging-tested)
+- **current**: TBD
+- **why**: a bad migration takes the whole product offline.
+
+## Repo: downtime-app
 The consumer-facing iOS/web app that reads `downtime-backend`.
 
-- **DAU / WAU ratio**: target ≥ 0.4 (sticky weekly use, not ghost installs)
-- **median session length**: target ≥ 90 s (long enough to actually plan)
-- **crash-free sessions**: target ≥ 99.5 %
-- **why these**: app stickiness is the main differentiator vs the email-
-  only experience. If users only open it once and never return, the app
-  isn't earning its build cost.
+### KPI: DAU / WAU ratio (downtime-app)
+- **target**: ≥ 0.4 (sticky weekly use, not ghost installs)
+- **current**: TBD
+- **why**: stickiness is the differentiator vs the email-only experience.
 
-### Repo: downtime-dfw
-The DFW-specific configuration / venue corpus / categorization rules. Acts
-as the "which sources to crawl + which neighborhood does each venue belong
-to" knowledge base.
+### KPI: Median session length (downtime-app)
+- **target**: ≥ 90 s (long enough to actually plan)
+- **current**: TBD
+- **why**: short sessions mean the app isn't earning its build cost.
 
-- **venue catalog coverage**: target ≥ 500 active DFW venues mapped to
-  neighborhoods + categories
-- **categorization accuracy**: target ≥ 90 % of events tagged correctly on
-  first pass (sample audit weekly)
-- **stale source detection**: target ≤ 7 days lag from "source goes 404"
-  to "source removed from crawler"
-- **why these**: the categorization quality is what makes the email feel
-  like a curated friend's recommendation vs an undifferentiated firehose.
+### KPI: Crash-free session rate (downtime-app)
+- **target**: ≥ 99.5 %
+- **current**: TBD
+- **why**: crashes are the fastest path to uninstall.
+
+## Repo: downtime-dfw
+The DFW-specific configuration / venue corpus / categorization rules.
+
+### KPI: Venue catalog coverage (downtime-dfw)
+- **target**: ≥ 500 active DFW venues mapped to neighborhoods + categories
+- **current**: TBD
+- **why**: catalog depth lets the email cluster by neighborhood/category
+  with variety instead of repeating the same venues.
+
+### KPI: Event categorization accuracy (downtime-dfw)
+- **target**: ≥ 90 % of events tagged correctly on first pass (weekly audit)
+- **current**: TBD
+- **why**: correct tags are what make the digest feel curated rather than
+  an undifferentiated firehose.
+
+### KPI: Stale source detection lag (downtime-dfw)
+- **target**: ≤ 7 days from "source goes 404" to "source removed from crawler"
+- **current**: TBD
+- **why**: dead sources eat ingestion runtime and produce zero events.
 
 ---
 

@@ -208,6 +208,63 @@ async def record_decision(
         return None
 
 
+async def record_planner_event(
+    *,
+    run_id: str | None,
+    parsed: int,
+    inserted: int,
+    skipped: int,
+    errors: int,
+    filtered_kpi_dup: int,
+    latency_ms: int,
+    tokens_in: int,
+    tokens_out: int,
+    output_preview: str,
+    open_kpi_count: int,
+) -> str | None:
+    """Persist a planner-cycle observability event to fleet.events.
+
+    Lets us answer 'did the planner fire? what did it produce? why are
+    epics rows still empty?' from SQL instead of from NF stdout (which
+    isn't reachable via the NF API).
+    """
+    if not _mcp_enabled():
+        return None
+    # Truncate output preview hard — events table is for debug breadcrumbs,
+    # not full LLM dumps.
+    preview = (output_preview or "").strip()
+    if len(preview) > 800:
+        preview = preview[:800] + "\u2026 [truncated]"
+    try:
+        async with _mcp_client() as c:
+            resp = await c.call_tool(
+                "record_event",
+                {
+                    "agent_name": "motto-director",
+                    "kind": "planner.cycle",
+                    "payload": {
+                        "parsed": parsed,
+                        "inserted": inserted,
+                        "skipped": skipped,
+                        "errors": errors,
+                        "filtered_kpi_dup": filtered_kpi_dup,
+                        "latency_ms": latency_ms,
+                        "tokens_in": tokens_in,
+                        "tokens_out": tokens_out,
+                        "output_preview": preview,
+                        "open_kpi_count": open_kpi_count,
+                    },
+                    "run_id": run_id,
+                    "level": "info",
+                },
+            )
+            data = getattr(resp, "data", None)
+            return str(data.get("event_id")) if isinstance(data, dict) else None
+    except Exception as e:
+        logger.warning("record_planner_event failed: %s", e)
+        return None
+
+
 async def langfuse_recent_traces(
     *,
     since_minutes: int = 60,
