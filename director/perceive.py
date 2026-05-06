@@ -13,24 +13,41 @@ import httpx
 GITHUB_API = "https://api.github.com"
 NORTHFLANK_API = "https://api.northflank.com/v1"
 
-# Tier 1 default watch list (May 2026): the four highest-ROI repos for
-# director attention. Override via the WATCH_REPOS env on the NF job.
+# Default watch list (May 2026 — broadened post cheap-clone deploy).
+# Override via the WATCH_REPOS env on the NF job.
 #
-# Tier 1 selection rationale:
-#   - motto-director: self-improvement loop (highest leverage)
-#   - motto-mcp-server: fleet-wide cockpit + MCP host (everyone depends on it)
-#   - motto-sdr-agent: revenue surface (cold outreach pipeline)
-#   - motto-appraisal-pipeline: appraisal automation core (operational ROI)
+# Why this is now safe to broaden: director.repo_cache does shallow
+# blobless `git pull --depth=1 --filter=blob:none` per repo per cycle.
+# The git protocol is exempt from GitHub's 5,000/hr REST limit and a
+# pull is <1s per repo, so perceiving 14 repos costs ~14 s of git +
+# zero REST file/commit calls (PR diffs still need REST but those are
+# already paginated and small).
 #
-# Other active repos (motto-social-agent, motto-appraisal-cockpit,
-# rw-order-monitor, downtime-*, motto-shortform, motto-distribution,
-# appraisalos-bidding) can be added back via WATCH_REPOS env once Tier 1
-# parallel-subagent fanout is stable.
+# DownTime repos (downtime-*) are intentionally NOT in this list. They
+# belong to a separate product line with its own KPI file
+# (downtime-kpis.md). When DownTime is ready for self-driving director
+# coverage, we'll add a second director job pointed at downtime-kpis.
 DEFAULT_WATCH_REPOS: tuple[str, ...] = (
+    # Self + control plane
     "lkmotto/motto-director",
     "lkmotto/motto-mcp-server",
+    "lkmotto/motto-appraisal-cockpit",
+    # Revenue surface
     "lkmotto/motto-sdr-agent",
+    "lkmotto/motto-outreach",
+    "lkmotto/motto-linkedin-ads",
+    # Appraisal operational core
     "lkmotto/motto-appraisal-pipeline",
+    "lkmotto/rw-order-monitor",
+    "lkmotto/appraisalos-bidding",
+    # Content + distribution
+    "lkmotto/motto-social-agent",
+    "lkmotto/motto-video-agent",
+    "lkmotto/motto-shortform",
+    "lkmotto/motto-distribution",
+    # Cost / finance visibility
+    "lkmotto/motto-fleet-burn-rate-tracker",
+    "lkmotto/motto-finance-tracker",
 )
 
 
