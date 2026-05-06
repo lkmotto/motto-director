@@ -201,6 +201,26 @@ async def _run_async() -> int:
             # capture (artifacts + decisions) attaches to the right row.
             # When MCP is unreachable run_id is None and capture no-ops.
             fleet_run_id_var.set(fleet_run.run_id)
+
+            # Step 0: drain approved pending_moves before perceiving. In
+            # manual approval mode the cockpit/Telegram approve rows but
+            # nothing executes them — the cycle was perceiving stale state
+            # and re-proposing the same things forever. Now the cycle owns
+            # the drain so manual mode actually applies. Bounded by
+            # DIRECTOR_APPLY_MAX (default 5) so a backlog can't blow up the
+            # cycle budget. No-ops when there are no approved rows.
+            try:
+                from director import apply_approved
+                drain_n = await apply_approved._async_main()  # type: ignore[attr-defined]
+                _log("director.drained_approved", returned=drain_n)
+                await event(
+                    "drained_approved",
+                    {"returned": int(drain_n or 0)},
+                    run=fleet_run,
+                )
+            except Exception as exc:  # noqa: BLE001
+                _log("director.drain_failed", error=str(exc)[:200])
+
             # Read the fleet's runtime state BEFORE perceiving our own GitHub
             # view — this is the new "director knows what the other agents
             # have been up to" feed. Returns [] when motto-mcp-server isn't
