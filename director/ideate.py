@@ -1,9 +1,31 @@
 """Ideate: ask an LLM to rank next moves for the motto stack.
 
-Default provider chain: deepseek → groq → openrouter → anthropic. Anthropic
-is last (Anthropic API credit is the bottleneck this layer was built to dodge);
-all three primary providers are OpenAI-compatible and routed through the
-openai SDK with a base_url + api_key swap.
+Provider chain (May 2026): **deepseek-only**.
+
+Historical note: this layer used to route deepseek → groq → openrouter →
+anthropic → claude_max (via Claude Code CLI subprocess). After ~6 weeks of
+production running, every fallback path proved structurally broken:
+
+  - claude_max via Max subscription OAuth: 5-hour rolling cap, 120s CLI
+    cold-start timeouts, and the CLI's auth-precedence rules silently
+    routed through ANTHROPIC_API_KEY when both envs were set, draining
+    a $0-balance API key with `result: 'Credit balance is too low'`.
+    See PRs #30-#35 for the four-step subprocess fix saga that ended
+    in deprecation.
+  - groq: 12k TPM cap on free tier; our 33KB system+snapshot prompt
+    (~13.8k tokens) blows past it on every call.
+  - openrouter free tier: meta-llama/llama-3.3-70b-instruct:free is
+    rate-limited upstream by Venice, returns 429 within 1-2 ticks/hour.
+  - anthropic SDK direct: same $0-balance API key as claude_max.
+
+DeepSeek V4 (released April 24, 2026) makes the multi-provider chain
+unnecessary: 1M context default, $0.14/M input + $0.28/M output for
+V4-Flash, OpenAI-compatible API, no rate cliff at our prompt size.
+Monthly burn at our cadence is ~$2-5 for V4-Flash, ~$30 for V4-Pro.
+
+If DeepSeek is ever down, the director will return zero moves for the
+tick and retry on the next 30-min cron — that's an acceptable failure
+mode for an orchestrator that runs every 30 minutes anyway.
 """
 
 from __future__ import annotations
@@ -34,64 +56,44 @@ _VALID_KINDS: frozenset[str] = frozenset(
 )
 
 # OpenAI-compatible providers. Each entry: (key_env, default_model_env,
-# default_model, base_url).
+# default_model, base_url). DeepSeek-only as of May 2026; see module
+# docstring for history. Other entries can be added back here if a
+# backup provider is ever wanted.
 PROVIDER_CONFIG: dict[str, dict[str, str]] = {
     "deepseek": {
         "key_env": "DEEPSEEK_API_KEY",
         "model_env": "DEEPSEEK_MODEL",
-        "default_model": "deepseek-chat",
+        # V4-Flash is the new floor model: 1M context, ~$0.14/M input,
+        # "reasoning capabilities closely approach V4-Pro... performs on
+        # par with V4-Pro on simple Agent tasks" per DeepSeek's release
+        # notes. Bump to deepseek-v4-pro via DEEPSEEK_MODEL env if quality
+        # ever lacks. The legacy deepseek-chat / deepseek-reasoner ids
+        # are deprecated 2026-07-24.
+        "default_model": "deepseek-v4-flash",
         "base_url": "https://api.deepseek.com/v1",
-    },
-    "groq": {
-        "key_env": "GROQ_API_KEY",
-        "model_env": "GROQ_MODEL",
-        "default_model": "llama-3.3-70b-versatile",
-        "base_url": "https://api.groq.com/openai/v1",
-    },
-    "openrouter": {
-        "key_env": "OPENROUTER_API_KEY",
-        "model_env": "OPENROUTER_MODEL",
-        "default_model": "meta-llama/llama-3.3-70b-instruct:free",
-        "base_url": "https://openrouter.ai/api/v1",
     },
 }
 
-# Chain default: claude_max first. The Claude Max OAuth token (Anthropic's
-# $200/mo Pro/Max plan, used by the Claude Code CLI) is bottomless for our
-# usage, while the OpenAI-compatible free tiers (deepseek/groq/openrouter)
-# are aggressively rate-limited and the raw ANTHROPIC_API_KEY runs on
-# pay-per-token credit. Order: subscription → free tiers → paid API.
-CHAIN_ORDER: tuple[str, ...] = (
-    "claude_max",
-    "deepseek",
-    "groq",
-    "openrouter",
-    "anthropic",
-)
+# DeepSeek-only chain. No fallback. If DeepSeek is down for a 30-min
+# tick, the director returns zero moves and tries again next tick.
+CHAIN_ORDER: tuple[str, ...] = ("deepseek",)
+
+# Anthropic SDK constants kept for the test-injection path in `ideate()`
+# (callers can pass an Anthropic client directly for unit tests). They
+# are no longer part of the production provider chain.
 ANTHROPIC_MODEL_ENV = "DIRECTOR_ANTHROPIC_MODEL"
 ANTHROPIC_DEFAULT_MODEL = "claude-opus-4-7"
 
-# Claude Max via the official `claude` CLI binary (subprocess).
-#
-# As of Jan 9, 2026 Anthropic enforces server-side that subscription OAuth
-# tokens are usable only inside the official Claude Code client. Direct
-# /v1/messages calls with the OAuth token now return 403/429 even with the
-# Claude Code identity prefix and oauth beta header (formalized in docs
-# Feb 19, 2026: https://docs.anthropic.com/en/docs/claude-code/legal-and-compliance).
-#
-# The compliant way to use the Max subscription from a server is to install
-# the `claude` CLI in the container, set CLAUDE_CODE_OAUTH_TOKEN as the
-# long-lived headless-auth token (generated via `claude setup-token`), and
-# shell out with `claude -p`. The CLI is the authorized client; calling it
-# from a subprocess preserves subscription billing.
+# Claude Max constants — DEPRECATED May 2026. Kept as module-level
+# attributes only because external callers (tests, other repos) may
+# import them. The production code path no longer uses any of them and
+# `_call_claude_max` is no longer wired into the provider chain.
 CLAUDE_MAX_TOKEN_ENV = "CLAUDE_CODE_OAUTH_TOKEN"
 CLAUDE_MAX_MODEL_ENV = "DIRECTOR_CLAUDE_MAX_MODEL"
 CLAUDE_MAX_DEFAULT_MODEL = "claude-sonnet-4-5"
 CLAUDE_MAX_BIN_ENV = "CLAUDE_CLI_BIN"
 CLAUDE_MAX_DEFAULT_BIN = "claude"
-CLAUDE_MAX_TIMEOUT_S = 120  # CLI subprocess startup adds ~1-2s; pad generously
-# Retained for backward-compat with any callers/tests; no longer used for
-# transport. Kept so other modules importing these constants don't break.
+CLAUDE_MAX_TIMEOUT_S = 120
 CLAUDE_MAX_BETA = "oauth-2025-04-20"
 CLAUDE_MAX_API_VERSION = "2023-06-01"
 CLAUDE_MAX_URL = "https://api.anthropic.com/v1/messages"
@@ -187,9 +189,9 @@ def _coerce_move(raw: dict) -> NextMove | None:
 
 
 def _provider_chain() -> list[str]:
-    # Default primary is now claude_max (Claude Code OAuth) — see CHAIN_ORDER
-    # comment for rationale. LLM_PROVIDER env can still pin a different one.
-    primary = os.environ.get("LLM_PROVIDER", "claude_max").lower()
+    # DeepSeek-only as of May 2026 (see module docstring). LLM_PROVIDER env
+    # can pin a different primary if more entries are ever added back.
+    primary = os.environ.get("LLM_PROVIDER", "deepseek").lower()
     rest = [p for p in CHAIN_ORDER if p != primary]
     return [primary, *rest] if primary in CHAIN_ORDER else list(CHAIN_ORDER)
 
@@ -430,8 +432,8 @@ def _call_openai_compatible(provider: str, system: str, user_msg: str) -> _Provi
 
 def _try_provider(provider: str, system: str, user_msg: str) -> _ProviderResult:
     if provider == "claude_max":
-        # _call_claude_max raises _ProviderUnavailable / _ProviderHTTPError
-        # directly with accurate status codes — no extra wrapping.
+        # DEPRECATED — retained for tests that exercise the old path. Not
+        # in CHAIN_ORDER, so production never reaches this branch.
         return _call_claude_max(system, user_msg)
     if provider == "anthropic":
         if not os.environ.get("ANTHROPIC_API_KEY"):

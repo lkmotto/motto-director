@@ -204,63 +204,21 @@ def test_ideate_returns_empty_on_unparseable_response():
     assert ideate(_snapshot(), client=client) == []
 
 
-def test_provider_chain_default_is_claude_max_first(monkeypatch):
-    """PR #24 made claude_max the canonical primary provider. PR
-    switching-claude-max-to-subprocess kept it primary, just changed transport."""
+def test_provider_chain_is_deepseek_only(monkeypatch):
+    """DeepSeek-only chain (May 2026). All other providers were removed
+    after every fallback path proved structurally broken — see module
+    docstring in director/ideate.py for the full history."""
     from director.ideate import _provider_chain
 
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
-    assert _provider_chain() == [
-        "claude_max",
-        "deepseek",
-        "groq",
-        "openrouter",
-        "anthropic",
-    ]
-
-
-def test_provider_chain_respects_llm_provider_env(monkeypatch):
-    from director.ideate import _provider_chain
-
-    monkeypatch.setenv("LLM_PROVIDER", "groq")
-    assert _provider_chain() == [
-        "groq",
-        "claude_max",
-        "deepseek",
-        "openrouter",
-        "anthropic",
-    ]
-
-    monkeypatch.setenv("LLM_PROVIDER", "openrouter")
-    assert _provider_chain() == [
-        "openrouter",
-        "claude_max",
-        "deepseek",
-        "groq",
-        "anthropic",
-    ]
-
-    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
-    assert _provider_chain() == [
-        "anthropic",
-        "claude_max",
-        "deepseek",
-        "groq",
-        "openrouter",
-    ]
+    assert _provider_chain() == ["deepseek"]
 
 
 def test_provider_chain_unknown_value_falls_back_to_canonical(monkeypatch):
     from director.ideate import _provider_chain
 
     monkeypatch.setenv("LLM_PROVIDER", "bogus")
-    assert _provider_chain() == [
-        "claude_max",
-        "deepseek",
-        "groq",
-        "openrouter",
-        "anthropic",
-    ]
+    assert _provider_chain() == ["deepseek"]
 
 
 def test_ideate_uses_deepseek_first_when_key_present(monkeypatch, capsys):
@@ -279,61 +237,41 @@ def test_ideate_uses_deepseek_first_when_key_present(monkeypatch, capsys):
     assert used[0]["tokens_in"] == 11 and used[0]["tokens_out"] == 22
 
 
-def test_ideate_fails_over_from_deepseek_401_to_groq(monkeypatch, capsys):
-    # claude_max is first in the chain but unavailable without a token, so it
-    # logs a failover with status_code=None (missing-key skip). Failover under
-    # test is deepseek (401) → groq (200), which is the second failover entry.
-    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+def test_ideate_returns_empty_when_deepseek_401(monkeypatch, capsys):
+    """DeepSeek-only chain has no fallback. A 401 → zero moves and a
+    single provider_failover log entry. Director will retry on the
+    next 30-min cron tick."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-bad")
-    monkeypatch.setenv("GROQ_API_KEY", "groq-good")
 
     with respx.mock() as mock:
         mock.post("https://api.deepseek.com/v1/chat/completions").mock(
             return_value=httpx.Response(401, json={"error": "no credit"})
         )
-        mock.post("https://api.groq.com/openai/v1/chat/completions").mock(
-            return_value=httpx.Response(200, json=_openai_compatible_response(_MOVES_PAYLOAD))
-        )
         moves = ideate(_snapshot())
 
-    assert len(moves) == 1
+    assert moves == []
     events = _log_events(capsys.readouterr().out)
     failovers = [e for e in events if e["event"] == "ideate.provider_failover"]
-    assert len(failovers) >= 2
-    # First failover: claude_max → deepseek (missing-token skip).
-    assert failovers[0]["from"] == "claude_max"
-    assert failovers[0]["status_code"] is None
-    # Second failover: deepseek (401) → groq.
-    deepseek_fo = next(e for e in failovers if e["from"] == "deepseek")
-    assert deepseek_fo["to"] == "groq"
-    assert deepseek_fo["status_code"] == 401
-    used = [e for e in events if e["event"] == "ideate.provider_used"]
-    assert used and used[0]["provider"] == "groq"
+    assert len(failovers) == 1
+    assert failovers[0]["from"] == "deepseek"
+    assert failovers[0]["to"] is None  # no next provider
+    assert failovers[0]["status_code"] == 401
 
 
-def test_ideate_skips_provider_with_missing_key(monkeypatch, capsys):
-    """Missing-key failover logs without a status_code and continues to the
-    next provider that has a key.
+def test_ideate_returns_empty_when_deepseek_key_missing(monkeypatch, capsys):
+    """Missing key for the only provider in the chain returns zero moves
+    with a single missing-key failover entry."""
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
 
-    With claude_max first in the chain (PR #24), expected failover order when
-    only OPENROUTER_API_KEY is set: claude_max → deepseek → groq → openrouter."""
-    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
-    monkeypatch.setenv("OPENROUTER_API_KEY", "or-ok")
+    moves = ideate(_snapshot())
 
-    with respx.mock() as mock:
-        mock.post("https://openrouter.ai/api/v1/chat/completions").mock(
-            return_value=httpx.Response(200, json=_openai_compatible_response(_MOVES_PAYLOAD))
-        )
-        moves = ideate(_snapshot())
-
-    assert len(moves) == 1
+    assert moves == []
     events = _log_events(capsys.readouterr().out)
     failovers = [e for e in events if e["event"] == "ideate.provider_failover"]
-    # claude_max, deepseek, and groq should all fail over with status_code=None.
-    assert [f["from"] for f in failovers[:3]] == ["claude_max", "deepseek", "groq"]
-    assert all(f["status_code"] is None for f in failovers[:3])
-    used = [e for e in events if e["event"] == "ideate.provider_used"]
-    assert used and used[0]["provider"] == "openrouter"
+    assert len(failovers) == 1
+    assert failovers[0]["from"] == "deepseek"
+    assert failovers[0]["to"] is None
+    assert failovers[0]["status_code"] is None  # missing-key skip
 
 
 def test_ideate_returns_empty_when_no_provider_can_serve(monkeypatch):
@@ -344,35 +282,36 @@ def test_ideate_returns_empty_when_no_provider_can_serve(monkeypatch):
     assert ideate(_snapshot()) == []
 
 
-def test_response_shape_parity_across_openai_compatible_adapters(monkeypatch):
-    """Same OpenAI-compatible response shape parses identically for
-    deepseek, groq, and openrouter."""
-    expected = ["lkmotto/motto-sdr-agent"]
-    for provider, base_url in [
-        ("deepseek", "https://api.deepseek.com/v1"),
-        ("groq", "https://api.groq.com/openai/v1"),
-        ("openrouter", "https://openrouter.ai/api/v1"),
-    ]:
-        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-        monkeypatch.delenv("GROQ_API_KEY", raising=False)
-        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-        key_env = {
-            "deepseek": "DEEPSEEK_API_KEY",
-            "groq": "GROQ_API_KEY",
-            "openrouter": "OPENROUTER_API_KEY",
-        }[provider]
-        monkeypatch.setenv(key_env, "k")
-        monkeypatch.setenv("LLM_PROVIDER", provider)
+def test_deepseek_v4_flash_is_default_model(monkeypatch, capsys):
+    """After the May 2026 deepseek-only migration, the default model id
+    is `deepseek-v4-flash`. The legacy `deepseek-chat` / `deepseek-reasoner`
+    ids are deprecated 2026-07-24 and will route silently to v4-flash
+    until cutoff — we want explicit, future-proof model selection.
+    Setting DEEPSEEK_MODEL must override (e.g. to bump to v4-pro)."""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-test")
 
-        with respx.mock() as mock:
-            mock.post(f"{base_url}/chat/completions").mock(
-                return_value=httpx.Response(
-                    200, json=_openai_compatible_response(_MOVES_PAYLOAD)
-                )
-            )
-            moves = ideate(_snapshot())
+    with respx.mock() as mock:
+        mock.post("https://api.deepseek.com/v1/chat/completions").mock(
+            return_value=httpx.Response(200, json=_openai_compatible_response(_MOVES_PAYLOAD))
+        )
+        ideate(_snapshot())
 
-        assert [m.repo for m in moves] == expected, f"shape mismatch for {provider}"
+    events = _log_events(capsys.readouterr().out)
+    used = [e for e in events if e["event"] == "ideate.provider_used"]
+    assert used and used[0]["provider"] == "deepseek"
+    assert used[0]["model"] == "deepseek-v4-flash"
+
+    # DEEPSEEK_MODEL env override (e.g. to bump to v4-pro).
+    monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
+    with respx.mock() as mock:
+        mock.post("https://api.deepseek.com/v1/chat/completions").mock(
+            return_value=httpx.Response(200, json=_openai_compatible_response(_MOVES_PAYLOAD))
+        )
+        ideate(_snapshot())
+
+    events = _log_events(capsys.readouterr().out)
+    used = [e for e in events if e["event"] == "ideate.provider_used"]
+    assert used[-1]["model"] == "deepseek-v4-pro"
 
 
 # ── Claude Max via `claude` CLI subprocess ────────────────────────────────────
