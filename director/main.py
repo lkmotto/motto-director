@@ -211,15 +211,24 @@ async def _run_async() -> int:
             # cycle budget. No-ops when there are no approved rows.
             try:
                 from director import apply_approved
-                drain_n = await apply_approved._async_main()  # type: ignore[attr-defined]
-                _log("director.drained_approved", returned=drain_n)
+                drain_applied = await apply_approved._async_main()  # type: ignore[attr-defined]
+                _log("director.drained_approved", applied=drain_applied)
                 await event(
                     "drained_approved",
-                    {"returned": int(drain_n or 0)},
+                    {"applied": int(drain_applied or 0)},
                     run=fleet_run,
                 )
             except Exception as exc:  # noqa: BLE001
                 _log("director.drain_failed", error=str(exc)[:200])
+                try:
+                    await event(
+                        "drain_failed",
+                        {"error": str(exc)[:200]},
+                        run=fleet_run,
+                        level="warn",
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
 
             # Read the fleet's runtime state BEFORE perceiving our own GitHub
             # view — this is the new "director knows what the other agents
