@@ -13,23 +13,24 @@ import httpx
 GITHUB_API = "https://api.github.com"
 NORTHFLANK_API = "https://api.northflank.com/v1"
 
-# Verified-real slugs under lkmotto (confirmed via GitHub org search). Override
-# at deploy time by setting WATCH_REPOS to a comma-separated list.
+# Tier 1 default watch list (May 2026): the four highest-ROI repos for
+# director attention. Override via the WATCH_REPOS env on the NF job.
 #
-# motto-conductor was the previous orchestrator, superseded by motto-director
-# itself; it's slated for archival per the consolidation sweep, so it's no
-# longer in the default watch list. Re-add it via WATCH_REPOS if you need to
-# touch it during the archive process.
+# Tier 1 selection rationale:
+#   - motto-director: self-improvement loop (highest leverage)
+#   - motto-mcp-server: fleet-wide cockpit + MCP host (everyone depends on it)
+#   - motto-sdr-agent: revenue surface (cold outreach pipeline)
+#   - motto-appraisal-pipeline: appraisal automation core (operational ROI)
+#
+# Other active repos (motto-social-agent, motto-appraisal-cockpit,
+# rw-order-monitor, downtime-*, motto-shortform, motto-distribution,
+# appraisalos-bidding) can be added back via WATCH_REPOS env once Tier 1
+# parallel-subagent fanout is stable.
 DEFAULT_WATCH_REPOS: tuple[str, ...] = (
-    "lkmotto/motto-social-agent",
+    "lkmotto/motto-director",
+    "lkmotto/motto-mcp-server",
     "lkmotto/motto-sdr-agent",
     "lkmotto/motto-appraisal-pipeline",
-    "lkmotto/motto-appraisal-cockpit",
-    "lkmotto/motto-mcp-server",
-    "lkmotto/motto-director",
-    # Added 2026-05-05: highest-volume stuck-issue surface (24 open issues).
-    # First non-DRY_RUN target for director point-and-shoot.
-    "lkmotto/appraisalos-bidding",
 )
 
 
