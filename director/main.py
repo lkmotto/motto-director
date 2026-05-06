@@ -287,7 +287,8 @@ async def _run_async() -> int:
                         error=str(exc)[:200],
                     )
 
-            moves = policy.filter_moves(raw_moves, snapshot)
+            _manual = queue.manual_mode_enabled()
+            moves = policy.filter_moves(raw_moves, snapshot, manual_mode=_manual)
             dropped = len(raw_moves) - len(moves)
             _log(
                 "director.ideated",

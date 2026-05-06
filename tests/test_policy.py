@@ -219,6 +219,31 @@ def test_filter_moves_keeps_labeled_spawn_session():
     assert len(kept) == 1
 
 
+def test_filter_moves_manual_mode_keeps_unlabeled_spawn_session():
+    """Manual mode bypasses the director-ok label gate; human reviews queue."""
+    issue = _issue(title="Issue title", labels=["bug"])
+    snap = _snapshot(issues=[issue])
+    moves = [_move_spawn(prompt="tweak retry timeout")]
+    kept = policy.filter_moves(moves, snap, manual_mode=True)
+    assert len(kept) == 1
+
+
+def test_filter_moves_manual_mode_still_drops_oversized_prompt():
+    """Manual mode still enforces prompt-scope safeguard (not a human-judgment gate)."""
+    issue = _issue(title="Issue title", labels=["bug"])
+    snap = _snapshot(issues=[issue])
+    moves = [
+        _move_spawn(
+            prompt=(
+                "rewrite src/a.py src/b.py src/c.py src/d.py and refactor "
+                "all of the helpers"
+            )
+        )
+    ]
+    kept = policy.filter_moves(moves, snap, manual_mode=True)
+    assert kept == []
+
+
 def test_filter_moves_drops_oversized_prompt_even_when_labeled():
     issue = _issue(title="Issue title", labels=["director-ok"])
     snap = _snapshot(issues=[issue])
