@@ -93,6 +93,32 @@ def test_format_for_prompt_downtime_label():
     assert "MOTTO KPIs" not in out
 
 
+def test_motto_kpi_file_uses_heading_format():
+    """Every per-repo KPI in motto-kpis.md must use `### KPI: <title>` so
+    the planner can lift the title verbatim into kpi_ref. If this test
+    fails because someone added a `#### KPI:` heading instead, the planner
+    will silently drop epics targeting that KPI."""
+    import re
+    from pathlib import Path
+    text = (Path(__file__).resolve().parent.parent / "motto-kpis.md").read_text()
+    assert not re.search(r"^#### KPI:", text, re.M), (
+        "motto-kpis.md uses 4-hash KPI headings; planner only matches 3-hash"
+    )
+    titles = re.findall(r"^### KPI: (.+)$", text, re.M)
+    assert len(titles) >= 20, f"motto-kpis.md only has {len(titles)} KPIs; expected ≥20"
+    assert len(set(titles)) == len(titles), "motto-kpis.md has duplicate KPI titles"
+
+
+def test_downtime_kpi_file_uses_heading_format():
+    import re
+    from pathlib import Path
+    text = (Path(__file__).resolve().parent.parent / "downtime-kpis.md").read_text()
+    assert not re.search(r"^#### KPI:", text, re.M)
+    titles = re.findall(r"^### KPI: (.+)$", text, re.M)
+    assert len(titles) >= 10, f"downtime-kpis.md only has {len(titles)} KPIs; expected ≥10"
+    assert len(set(titles)) == len(titles)
+
+
 def test_kpi_files_dont_overlap_titles():
     """Sanity: motto and downtime KPI files must not share KPI titles, or
     `kpi_ref` lookup becomes ambiguous."""

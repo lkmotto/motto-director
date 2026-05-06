@@ -46,6 +46,7 @@ import os
 import sys
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 
@@ -325,10 +326,14 @@ Hard rules:
 1. Output {} or {"epics": []} if you have nothing high-leverage to propose.
    Empty is better than mediocre.
 2. Each epic must have 3-8 steps. Single-step epics are not epics.
-3. `kpi_ref` MUST exactly match a KPI title from the KPIs block (it is the
-   text after `### KPI:` or a Tier-0 KPI title). KPIs are organized by repo;
-   pick the KPI that lives in the same repo as the steps you're proposing.
-   If you can't tie an idea to a KPI, drop it.
+3. `kpi_ref` MUST exactly match a KPI title from the KPIs block. A KPI
+   title is the EXACT text after `### KPI: ` (three hashes, single space,
+   no trailing punctuation) on a heading line. Example: if the file says
+   `### KPI: Cold email reply rate`, then write `"kpi_ref": "Cold email
+   reply rate"`. Tier-0 KPIs use the same `### KPI:` heading prefix.
+   Per-repo KPIs are nested under `## Repo: <name>` headings; pick the
+   KPI that lives under the same repo as the steps you're proposing.
+   If you can't tie an idea to one of these exact titles, drop the epic.
 4. depends_on contains step.order values; step 1 has no deps.
 5. Be ambitious with scope and concrete with steps. Each step should
    describe one observable change in one repo.
@@ -678,6 +683,9 @@ async def _run_planner(
         open_kpi_epics=open_kpis_text,
     )
     started = datetime.now(UTC)
+    text = ""
+    usage: dict[str, Any] = {}
+    call_error: str | None = None
     try:
         resp = await client.post(
             f"{DEEPSEEK_BASE_URL}/chat/completions",
@@ -697,22 +705,24 @@ async def _run_planner(
         )
         resp.raise_for_status()
         data = resp.json()
+        text = (
+            data.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+        )
+        usage = data.get("usage", {}) or {}
     except Exception as exc:  # noqa: BLE001
-        _log("orchestrator.planner.error", error=str(exc)[:200])
-        return {"errors": 1}
+        call_error = str(exc)[:200]
+        _log("orchestrator.planner.error", error=call_error)
 
     latency = int((datetime.now(UTC) - started).total_seconds() * 1000)
-    text = (
-        data.get("choices", [{}])[0]
-        .get("message", {})
-        .get("content", "")
-    )
-    usage = data.get("usage", {}) or {}
-    candidates = _parse_planner_epics(text, run_id=run_id)
+    candidates = _parse_planner_epics(text, run_id=run_id) if text else []
     # Skip epics whose KPI already has an open epic.
     open_set = set(open_kpis)
     fresh = [e for e in candidates if e.kpi_ref not in open_set]
-    counts = insert_epics(fresh, run_id=run_id)
+    counts = insert_epics(fresh, run_id=run_id) if fresh else {
+        "inserted": 0, "skipped": 0, "errors": 0,
+    }
     counts.update(
         {
             "parsed": len(candidates),
@@ -722,7 +732,30 @@ async def _run_planner(
             "tokens_out": int(usage.get("completion_tokens", 0) or 0),
         }
     )
+    if call_error:
+        counts["call_error"] = call_error
     _log("orchestrator.planner.done", **counts)
+
+    # Persist a planner.cycle event to fleet.events so we can debug the
+    # planner from SQL (NF API doesn't expose run logs).
+    try:
+        from director import fleet as fleet_mod
+        await fleet_mod.record_planner_event(
+            run_id=run_id or None,
+            parsed=int(counts.get("parsed", 0)),
+            inserted=int(counts.get("inserted", 0)),
+            skipped=int(counts.get("skipped", 0)),
+            errors=int(counts.get("errors", 0)),
+            filtered_kpi_dup=int(counts.get("filtered_kpi_dup", 0)),
+            latency_ms=int(counts.get("latency_ms", 0)),
+            tokens_in=int(counts.get("tokens_in", 0)),
+            tokens_out=int(counts.get("tokens_out", 0)),
+            output_preview=(call_error or text or ""),
+            open_kpi_count=len(open_kpis),
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log("orchestrator.planner.event_failed", error=str(exc)[:200])
+
     return counts
 
 
