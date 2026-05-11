@@ -102,9 +102,9 @@ def test_motto_kpi_file_uses_heading_format():
     from pathlib import Path
 
     text = (Path(__file__).resolve().parent.parent / "motto-kpis.md").read_text()
-    assert not re.search(
-        r"^#### KPI:", text, re.M
-    ), "motto-kpis.md uses 4-hash KPI headings; planner only matches 3-hash"
+    assert not re.search(r"^#### KPI:", text, re.M), (
+        "motto-kpis.md uses 4-hash KPI headings; planner only matches 3-hash"
+    )
     titles = re.findall(r"^### KPI: (.+)$", text, re.M)
     assert len(titles) >= 20, f"motto-kpis.md only has {len(titles)} KPIs; expected ≥20"
     assert len(set(titles)) == len(titles), "motto-kpis.md has duplicate KPI titles"

@@ -30,9 +30,9 @@ def test_default_watch_repos_excludes_downtime_product_line():
     in the Motto director's default watch list."""
     for slug in DEFAULT_WATCH_REPOS:
         name = slug.split("/")[-1]
-        assert not name.startswith(
-            "downtime-"
-        ), f"{slug} is a DownTime repo and must not be in DEFAULT_WATCH_REPOS"
+        assert not name.startswith("downtime-"), (
+            f"{slug} is a DownTime repo and must not be in DEFAULT_WATCH_REPOS"
+        )
 
 
 def test_default_watch_repos_covers_revenue_and_appraisal_cores():
