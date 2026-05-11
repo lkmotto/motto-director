@@ -26,6 +26,12 @@ jobs:
         run: ruff check .
       - name: Test
         run: pytest
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
       - name: Verify DEFAULT_WATCH_REPOS slugs
         env:
           WATCH_REPOS_VERIFY_TOKEN: ${{ secrets.WATCH_REPOS_VERIFY_TOKEN }}

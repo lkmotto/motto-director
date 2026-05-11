@@ -1,5 +1,7 @@
 # motto-director
 
+[![codecov](https://codecov.io/gh/lkmotto/motto-director/branch/main/graph/badge.svg)](https://codecov.io/gh/lkmotto/motto-director)
+
 Self-aware autonomous orchestrator for the motto stack. Runs as a Northflank
 cron job; on every tick it perceives state across the stack, ideates the next
 moves with Claude Opus, and acts on the top-ranked ones.
