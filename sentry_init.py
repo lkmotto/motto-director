@@ -15,6 +15,7 @@ Environment:
     SENTRY_TRACES_SAMPLE_RATE  - traces sample rate, defaults to ``0.1``.
     GIT_SHA / RELEASE_SHA      - explicit release SHA; otherwise read from git.
 """
+
 from __future__ import annotations
 
 import functools
@@ -34,9 +35,7 @@ def _git_sha() -> str:
         return sha
     try:
         return (
-            subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
-            )
+            subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL)
             .decode()
             .strip()
         )

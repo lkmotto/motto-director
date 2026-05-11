@@ -111,11 +111,7 @@ def _openai_compatible_response(payload: dict) -> dict:
 
 
 def _log_events(captured_out: str) -> list[dict]:
-    return [
-        json.loads(ln)
-        for ln in captured_out.splitlines()
-        if ln.strip().startswith("{")
-    ]
+    return [json.loads(ln) for ln in captured_out.splitlines() if ln.strip().startswith("{")]
 
 
 def test_ideate_parses_moves_and_keeps_only_those_with_intent():
@@ -389,6 +385,7 @@ def test_call_claude_max_subprocess_success(monkeypatch):
     # the "no stdin data received in 3s" warning then exit=1. Pinning stdin to
     # DEVNULL is the documented fix.
     import subprocess as _sp  # noqa: PLC0415
+
     assert captured_kwargs.get("stdin") == _sp.DEVNULL
     # Regression for prod failure observed 2026-05-05 23:10 UTC: Northflank
     # containers run as root, and the Claude Code CLI refuses non-interactive
@@ -427,11 +424,13 @@ def test_call_claude_max_strips_api_key_envs(monkeypatch):
         captured_kwargs.update(kwargs)
         return SimpleNamespace(
             returncode=0,
-            stdout=json.dumps({
-                "result": '{"moves": []}',
-                "model": "claude-sonnet-4-5",
-                "usage": {"input_tokens": 1, "output_tokens": 1},
-            }),
+            stdout=json.dumps(
+                {
+                    "result": '{"moves": []}',
+                    "model": "claude-sonnet-4-5",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                }
+            ),
             stderr="",
         )
 

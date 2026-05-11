@@ -26,9 +26,9 @@ def test_default_lenses_have_prompts():
 
 
 def test_extract_json_strips_fences():
-    assert _extract_json("```json\n{\"moves\": []}\n```") == {"moves": []}
-    assert _extract_json("{\"moves\": [1]}") == {"moves": [1]}
-    assert _extract_json("garbage {\"a\": 1} trailing") == {"a": 1}
+    assert _extract_json('```json\n{"moves": []}\n```') == {"moves": []}
+    assert _extract_json('{"moves": [1]}') == {"moves": [1]}
+    assert _extract_json('garbage {"a": 1} trailing') == {"a": 1}
     assert _extract_json("not json at all") == {}
     assert _extract_json("") == {}
 
@@ -66,12 +66,16 @@ def test_merge_dedupes_by_repo_kind_title():
     r1 = SubagentResult(
         lens="ci_doctor",
         moves=[_make_move("r1", "merge_pr", "Fix CI", priority=3)],
-        tokens_in=0, tokens_out=0, latency_ms=0,
+        tokens_in=0,
+        tokens_out=0,
+        latency_ms=0,
     )
     r2 = SubagentResult(
         lens="stale_pr_closer",
         moves=[_make_move("r1", "merge_pr", "fix ci", priority=2)],
-        tokens_in=0, tokens_out=0, latency_ms=0,
+        tokens_in=0,
+        tokens_out=0,
+        latency_ms=0,
     )
     merged = _merge_moves([r1, r2])
     assert len(merged) == 1
@@ -86,12 +90,16 @@ def test_merge_preserves_distinct_moves():
     r1 = SubagentResult(
         lens="ci_doctor",
         moves=[_make_move("r1", "merge_pr", "A", priority=3)],
-        tokens_in=0, tokens_out=0, latency_ms=0,
+        tokens_in=0,
+        tokens_out=0,
+        latency_ms=0,
     )
     r2 = SubagentResult(
         lens="stale_pr_closer",
         moves=[_make_move("r2", "merge_pr", "B", priority=2)],
-        tokens_in=0, tokens_out=0, latency_ms=0,
+        tokens_in=0,
+        tokens_out=0,
+        latency_ms=0,
     )
     merged = _merge_moves([r1, r2])
     assert len(merged) == 2
@@ -103,11 +111,10 @@ def test_merge_preserves_distinct_moves():
 def test_merge_caps_at_max_total():
     r = SubagentResult(
         lens="x",
-        moves=[
-            _make_move("r1", "file_issue", f"t{i}", priority=3)
-            for i in range(50)
-        ],
-        tokens_in=0, tokens_out=0, latency_ms=0,
+        moves=[_make_move("r1", "file_issue", f"t{i}", priority=3) for i in range(50)],
+        tokens_in=0,
+        tokens_out=0,
+        latency_ms=0,
     )
     merged = _merge_moves([r], max_total=10)
     assert len(merged) == 10
@@ -130,8 +137,12 @@ def test_parallel_ideate_handles_subagent_errors(monkeypatch):
 
     async def fake_call(*args, **kwargs):
         return SubagentResult(
-            lens=kwargs["lens"], moves=[], tokens_in=0,
-            tokens_out=0, latency_ms=10, error="boom",
+            lens=kwargs["lens"],
+            moves=[],
+            tokens_in=0,
+            tokens_out=0,
+            latency_ms=10,
+            error="boom",
         )
 
     monkeypatch.setattr(orchestrator, "_call_subagent", fake_call)
@@ -159,10 +170,15 @@ def test_parallel_ideate_merges_results(monkeypatch):
                         priority=2,
                     )
                 ],
-                tokens_in=100, tokens_out=50, latency_ms=200,
+                tokens_in=100,
+                tokens_out=50,
+                latency_ms=200,
             )
         return SubagentResult(
-            lens=lens, moves=[], tokens_in=10, tokens_out=5,
+            lens=lens,
+            moves=[],
+            tokens_in=10,
+            tokens_out=5,
             latency_ms=100,
         )
 
@@ -192,7 +208,10 @@ def test_parallel_ideate_concurrency_respected(monkeypatch):
         async with lock:
             in_flight["now"] -= 1
         return SubagentResult(
-            lens=lens, moves=[], tokens_in=0, tokens_out=0,
+            lens=lens,
+            moves=[],
+            tokens_in=0,
+            tokens_out=0,
             latency_ms=10,
         )
 
@@ -202,9 +221,7 @@ def test_parallel_ideate_concurrency_respected(monkeypatch):
         repos=[],
         pipeline_auto_nudge=None,
     )
-    asyncio.run(
-        parallel_ideate(snap, max_concurrency=2)
-    )
+    asyncio.run(parallel_ideate(snap, max_concurrency=2))
     # 5 lenses with concurrency=2 → max in-flight should be 2
     assert in_flight["max"] <= 2
     assert in_flight["max"] >= 1

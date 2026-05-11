@@ -30,9 +30,9 @@ def test_default_watch_repos_excludes_downtime_product_line():
     in the Motto director's default watch list."""
     for slug in DEFAULT_WATCH_REPOS:
         name = slug.split("/")[-1]
-        assert not name.startswith("downtime-"), (
-            f"{slug} is a DownTime repo and must not be in DEFAULT_WATCH_REPOS"
-        )
+        assert not name.startswith(
+            "downtime-"
+        ), f"{slug} is a DownTime repo and must not be in DEFAULT_WATCH_REPOS"
 
 
 def test_default_watch_repos_covers_revenue_and_appraisal_cores():
@@ -49,21 +49,17 @@ def test_default_watch_repos_covers_revenue_and_appraisal_cores():
 
 
 def _iso(hours_ago: float) -> str:
-    return (
-        datetime.now(UTC) - timedelta(hours=hours_ago)
-    ).isoformat().replace("+00:00", "Z")
+    return (datetime.now(UTC) - timedelta(hours=hours_ago)).isoformat().replace("+00:00", "Z")
 
 
 @respx.mock
 def test_perceive_collects_state_for_all_repos():
     repos = ("lkmotto/motto-social-agent",)
 
-    respx.get(
-        "https://api.github.com/repos/lkmotto/motto-social-agent"
-    ).mock(return_value=httpx.Response(200, json={"default_branch": "main"}))
-    respx.get(
-        "https://api.github.com/repos/lkmotto/motto-social-agent/branches/main"
-    ).mock(
+    respx.get("https://api.github.com/repos/lkmotto/motto-social-agent").mock(
+        return_value=httpx.Response(200, json={"default_branch": "main"})
+    )
+    respx.get("https://api.github.com/repos/lkmotto/motto-social-agent/branches/main").mock(
         return_value=httpx.Response(
             200,
             json={
@@ -73,9 +69,7 @@ def test_perceive_collects_state_for_all_repos():
             },
         )
     )
-    respx.get(
-        "https://api.github.com/repos/lkmotto/motto-social-agent/pulls"
-    ).mock(
+    respx.get("https://api.github.com/repos/lkmotto/motto-social-agent/pulls").mock(
         return_value=httpx.Response(
             200,
             json=[
@@ -98,9 +92,7 @@ def test_perceive_collects_state_for_all_repos():
             json={"check_runs": [{"conclusion": "success"}]},
         )
     )
-    respx.get(
-        "https://api.github.com/repos/lkmotto/motto-social-agent/pulls/42/reviews"
-    ).mock(
+    respx.get("https://api.github.com/repos/lkmotto/motto-social-agent/pulls/42/reviews").mock(
         return_value=httpx.Response(
             200,
             json=[
@@ -108,9 +100,7 @@ def test_perceive_collects_state_for_all_repos():
             ],
         )
     )
-    respx.get(
-        "https://api.github.com/repos/lkmotto/motto-social-agent/issues"
-    ).mock(
+    respx.get("https://api.github.com/repos/lkmotto/motto-social-agent/issues").mock(
         return_value=httpx.Response(
             200,
             json=[
@@ -133,9 +123,7 @@ def test_perceive_collects_state_for_all_repos():
             ],
         )
     )
-    respx.get(
-        "https://api.northflank.com/v1/projects/motto/jobs/pipeline-auto-nudge/runs"
-    ).mock(
+    respx.get("https://api.northflank.com/v1/projects/motto/jobs/pipeline-auto-nudge/runs").mock(
         return_value=httpx.Response(
             200,
             json={
@@ -175,15 +163,13 @@ def test_perceive_collects_state_for_all_repos():
 def test_perceive_handles_pending_ci_and_changes_requested():
     repos = ("lkmotto/motto-sdr-agent",)
 
-    respx.get(
-        "https://api.github.com/repos/lkmotto/motto-sdr-agent"
-    ).mock(return_value=httpx.Response(200, json={"default_branch": "main"}))
-    respx.get(
-        "https://api.github.com/repos/lkmotto/motto-sdr-agent/branches/main"
-    ).mock(return_value=httpx.Response(404))
-    respx.get(
-        "https://api.github.com/repos/lkmotto/motto-sdr-agent/pulls"
-    ).mock(
+    respx.get("https://api.github.com/repos/lkmotto/motto-sdr-agent").mock(
+        return_value=httpx.Response(200, json={"default_branch": "main"})
+    )
+    respx.get("https://api.github.com/repos/lkmotto/motto-sdr-agent/branches/main").mock(
+        return_value=httpx.Response(404)
+    )
+    respx.get("https://api.github.com/repos/lkmotto/motto-sdr-agent/pulls").mock(
         return_value=httpx.Response(
             200,
             json=[
@@ -206,20 +192,18 @@ def test_perceive_handles_pending_ci_and_changes_requested():
             json={"check_runs": [{"conclusion": None}, {"conclusion": "success"}]},
         )
     )
-    respx.get(
-        "https://api.github.com/repos/lkmotto/motto-sdr-agent/pulls/1/reviews"
-    ).mock(
+    respx.get("https://api.github.com/repos/lkmotto/motto-sdr-agent/pulls/1/reviews").mock(
         return_value=httpx.Response(
             200,
             json=[{"user": {"login": "bob"}, "state": "CHANGES_REQUESTED"}],
         )
     )
-    respx.get(
-        "https://api.github.com/repos/lkmotto/motto-sdr-agent/issues"
-    ).mock(return_value=httpx.Response(200, json=[]))
-    respx.get(
-        "https://api.northflank.com/v1/projects/motto/jobs/pipeline-auto-nudge/runs"
-    ).mock(return_value=httpx.Response(500))
+    respx.get("https://api.github.com/repos/lkmotto/motto-sdr-agent/issues").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    respx.get("https://api.northflank.com/v1/projects/motto/jobs/pipeline-auto-nudge/runs").mock(
+        return_value=httpx.Response(500)
+    )
 
     snapshot = perceive(repos=repos)
     pr = snapshot.repos[0].open_prs[0]
@@ -245,23 +229,21 @@ def test_perceive_skips_404_repo_and_keeps_good_one(capsys):
     respx.get("https://api.github.com/repos/lkmotto/motto-social-agent").mock(
         return_value=httpx.Response(200, json={"default_branch": "main"})
     )
-    respx.get(
-        "https://api.github.com/repos/lkmotto/motto-social-agent/branches/main"
-    ).mock(
+    respx.get("https://api.github.com/repos/lkmotto/motto-social-agent/branches/main").mock(
         return_value=httpx.Response(
             200,
             json={"commit": {"commit": {"committer": {"date": _iso(1.0)}}}},
         )
     )
-    respx.get(
-        "https://api.github.com/repos/lkmotto/motto-social-agent/pulls"
-    ).mock(return_value=httpx.Response(200, json=[]))
-    respx.get(
-        "https://api.github.com/repos/lkmotto/motto-social-agent/issues"
-    ).mock(return_value=httpx.Response(200, json=[]))
-    respx.get(
-        "https://api.northflank.com/v1/projects/motto/jobs/pipeline-auto-nudge/runs"
-    ).mock(return_value=httpx.Response(200, json={"data": {"runs": []}}))
+    respx.get("https://api.github.com/repos/lkmotto/motto-social-agent/pulls").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    respx.get("https://api.github.com/repos/lkmotto/motto-social-agent/issues").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    respx.get("https://api.northflank.com/v1/projects/motto/jobs/pipeline-auto-nudge/runs").mock(
+        return_value=httpx.Response(200, json={"data": {"runs": []}})
+    )
 
     snapshot = perceive(repos=repos)
 
@@ -289,20 +271,18 @@ def test_perceive_skips_northflank_when_api_key_missing(monkeypatch, capsys):
     respx.get("https://api.github.com/repos/lkmotto/motto-social-agent").mock(
         return_value=httpx.Response(200, json={"default_branch": "main"})
     )
-    respx.get(
-        "https://api.github.com/repos/lkmotto/motto-social-agent/branches/main"
-    ).mock(
+    respx.get("https://api.github.com/repos/lkmotto/motto-social-agent/branches/main").mock(
         return_value=httpx.Response(
             200,
             json={"commit": {"commit": {"committer": {"date": _iso(1.0)}}}},
         )
     )
-    respx.get(
-        "https://api.github.com/repos/lkmotto/motto-social-agent/pulls"
-    ).mock(return_value=httpx.Response(200, json=[]))
-    respx.get(
-        "https://api.github.com/repos/lkmotto/motto-social-agent/issues"
-    ).mock(return_value=httpx.Response(200, json=[]))
+    respx.get("https://api.github.com/repos/lkmotto/motto-social-agent/pulls").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    respx.get("https://api.github.com/repos/lkmotto/motto-social-agent/issues").mock(
+        return_value=httpx.Response(200, json=[])
+    )
     # No respx mock for the Northflank URL — if the guard regresses, respx
     # would raise on the unmocked call and this test would fail.
 

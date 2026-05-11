@@ -54,10 +54,7 @@ def test_middle_band_yields_baseline_plus_one():
     fake_psycopg = MagicMock()
     fake_psycopg.connect.return_value = _patch_psycopg([14.0, 20.0])  # 70%
     with patch.dict("sys.modules", {"psycopg": fake_psycopg}):
-        assert (
-            concurrency.adaptive_session_limit("postgres://x")
-            == concurrency.BASE_LIMIT + 1
-        )
+        assert concurrency.adaptive_session_limit("postgres://x") == concurrency.BASE_LIMIT + 1
 
 
 def test_no_data_falls_back_to_baseline():

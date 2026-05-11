@@ -199,9 +199,7 @@ async def _run_async() -> int:
             _log("director.cycle_skipped", reason="another cycle holds director:cycle")
             return 0
 
-        async with track_run(
-            "perceive_ideate_act_cycle", intent="auto-nudge"
-        ) as fleet_run:
+        async with track_run("perceive_ideate_act_cycle", intent="auto-nudge") as fleet_run:
             # Make the fleet run id available to act() helpers so I/O
             # capture (artifacts + decisions) attaches to the right row.
             # When MCP is unreachable run_id is None and capture no-ops.
@@ -216,6 +214,7 @@ async def _run_async() -> int:
             # cycle budget. No-ops when there are no approved rows.
             try:
                 from director import apply_approved
+
                 drain_applied = await apply_approved._async_main()  # type: ignore[attr-defined]
                 _log("director.drained_approved", applied=drain_applied)
                 await event(
@@ -407,17 +406,20 @@ async def _run_async() -> int:
             fleet_run.summary["dropped_by_policy"] = dropped
             fleet_run.summary["session_limit"] = session_limit
 
-            _log("director.done", executed=executed,
-                 mode=fleet_run.summary.get("approval_mode", "auto"))
+            _log(
+                "director.done",
+                executed=executed,
+                mode=fleet_run.summary.get("approval_mode", "auto"),
+            )
 
     return 0
 
 
 if __name__ == "__main__":
     import sentry_sdk as _sentry_sdk
+
     try:
         sys.exit(run())
     except Exception as _exc:
         _sentry_sdk.capture_exception(_exc)
         raise
-

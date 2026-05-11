@@ -168,17 +168,11 @@ def _file_critique_issue(client: httpx.Client, move: NextMove) -> ActResult:
         },
     )
     if r.status_code >= 300:
-        return ActResult(
-            move=move, status="error", detail=f"{r.status_code} {r.text}"
-        )
-    return ActResult(
-        move=move, status="executed", detail=r.json().get("html_url", "")
-    )
+        return ActResult(move=move, status="error", detail=f"{r.status_code} {r.text}")
+    return ActResult(move=move, status="executed", detail=r.json().get("html_url", ""))
 
 
-def _spawn_session(
-    client: httpx.Client, move: NextMove, snapshot: Snapshot
-) -> ActResult:
+def _spawn_session(client: httpx.Client, move: NextMove, snapshot: Snapshot) -> ActResult:
     # Policy gate runs before we burn a session — this is the bandwidth saver.
     target = _find_issue(snapshot, move.repo, move.title) or _find_pr(
         snapshot, move.repo, move.title
@@ -202,9 +196,7 @@ def _spawn_session(
             detail="no CLAUDE_CODE_OAUTH_TOKEN; spawn_session is optional",
         )
     if not move.prompt_for_claude_code:
-        return ActResult(
-            move=move, status="skipped", detail="missing prompt_for_claude_code"
-        )
+        return ActResult(move=move, status="skipped", detail="missing prompt_for_claude_code")
 
     fleet_run_id = fleet_run_id_var.get()
     pending_token = uuid.uuid4().hex[:12]
@@ -289,27 +281,30 @@ def _verify_move(move: NextMove) -> ActResult:
     target_id = move.target_move_id
     if target_id is None:
         return ActResult(
-            move=move, status="error",
+            move=move,
+            status="error",
             detail="verify_move payload missing target_move_id",
         )
     try:
         target_id = int(target_id)
     except (ValueError, TypeError):
         return ActResult(
-            move=move, status="error",
+            move=move,
+            status="error",
             detail=f"target_move_id not int: {target_id!r}",
         )
 
-    if not (os.environ.get("MOTTO_MCP_URL")
-            and os.environ.get("MOTTO_MCP_AUTH_TOKEN")):
+    if not (os.environ.get("MOTTO_MCP_URL") and os.environ.get("MOTTO_MCP_AUTH_TOKEN")):
         return ActResult(
-            move=move, status="skipped",
+            move=move,
+            status="skipped",
             detail="verify_move: MOTTO_MCP_URL/TOKEN not configured",
         )
 
     async def _call() -> dict:
         from fastmcp import Client
         from fastmcp.client.auth import BearerAuth
+
         url = os.environ["MOTTO_MCP_URL"]
         token = os.environ["MOTTO_MCP_AUTH_TOKEN"]
         async with Client(url, auth=BearerAuth(token)) as c:
@@ -333,16 +328,20 @@ def _verify_move(move: NextMove) -> ActResult:
         # loop in a thread to avoid "asyncio.run() cannot be called from
         # a running event loop".
         import threading
+
         box: dict = {}
+
         def _runner() -> None:
             box["r"] = asyncio.run(_call())
+
         t = threading.Thread(target=_runner)
         t.start()
         t.join(timeout=30)
         result = box.get("r", {})
     except Exception as exc:  # noqa: BLE001
         return ActResult(
-            move=move, status="error",
+            move=move,
+            status="error",
             detail=f"verify_move call failed: {type(exc).__name__}: {exc}"[:200],
         )
 
@@ -353,38 +352,35 @@ def _verify_move(move: NextMove) -> ActResult:
     # outcome lives in fleet.move_verifications and trust_scores.
     if status in ("passed", "failed"):
         return ActResult(
-            move=move, status="executed",
+            move=move,
+            status="executed",
             detail=f"verify[{verifier}]={status} target=#{target_id}",
         )
     if status == "inconclusive":
         return ActResult(
-            move=move, status="executed",
+            move=move,
+            status="executed",
             detail=f"verify[{verifier}]=inconclusive target=#{target_id}",
         )
     err = (result or {}).get("error") or "unknown"
     return ActResult(
-        move=move, status="error",
+        move=move,
+        status="error",
         detail=f"verify[{verifier}]={status} err={err[:120]}",
     )
 
 
-def _merge_pr(
-    client: httpx.Client, move: NextMove, snapshot: Snapshot
-) -> ActResult:
+def _merge_pr(client: httpx.Client, move: NextMove, snapshot: Snapshot) -> ActResult:
     pr = _find_pr(snapshot, move.repo, move.title)
     if pr is None:
-        return ActResult(
-            move=move, status="skipped", detail="PR not found in snapshot"
-        )
+        return ActResult(move=move, status="skipped", detail="PR not found in snapshot")
     eligible, reason = policy.is_eligible_for_auto_merge(pr, pr.ci_status)
     if not eligible:
         # Allow the legacy `auto-merge-ok` label as a temporary backstop
         # while we migrate review gates over to `director-ok`. Self-mod
         # and CI failures are NOT bypassable by either label.
         legacy_ok = (
-            pr.ci_status == "success"
-            and pr.approvals >= 1
-            and AUTO_MERGE_LABEL in pr.labels
+            pr.ci_status == "success" and pr.approvals >= 1 and AUTO_MERGE_LABEL in pr.labels
         )
         if not legacy_ok:
             return ActResult(move=move, status="skipped", detail=f"policy: {reason}")
@@ -423,9 +419,7 @@ def _log(event: str, **fields: object) -> None:
     print(json.dumps(record, default=str), file=sys.stdout, flush=True)
 
 
-def _compound_pr(
-    client: httpx.Client, move: NextMove, *, run_id: str
-) -> ActResult:
+def _compound_pr(client: httpx.Client, move: NextMove, *, run_id: str) -> ActResult:
     if not move.code_changes:
         return ActResult(move=move, status="skipped", detail="no code_changes")
 
@@ -546,10 +540,7 @@ def act(
     """Execute the top-N moves. Honors DIRECTOR_DRY_RUN=1."""
     selected = moves[:top_n]
     if _dry_run():
-        return [
-            ActResult(move=m, status="dry_run", detail=f"would {m.kind}")
-            for m in selected
-        ]
+        return [ActResult(move=m, status="dry_run", detail=f"would {m.kind}") for m in selected]
 
     run_id = run_id or uuid.uuid4().hex[:12]
     results: list[ActResult] = []
@@ -574,7 +565,5 @@ def act(
                 elif move.kind == "verify_move":
                     results.append(_verify_move(move))
             except httpx.HTTPError as exc:
-                results.append(
-                    ActResult(move=move, status="error", detail=str(exc))
-                )
+                results.append(ActResult(move=move, status="error", detail=str(exc)))
     return results

@@ -29,12 +29,12 @@ from typing import Any, Literal
 Cheapness = Literal["cheap", "expensive"]
 
 # Defaults tuned for a 7-day window. Operators can override at call time.
-HIGH_ERROR_RATE = 0.10           # 10%+ of calls error
-SLOW_P95_MS = 30_000             # 30s p95 considered slow
-HIGH_OVERTURN_RATE = 0.20        # 20%+ of decisions overturned by meta
-LOW_MERGE_RATE = 0.50            # <50% PR merge rate is suspicious
-REVERT_FLAG_THRESHOLD = 1        # any revert is worth surfacing
-REPEATED_FAILURE_MIN = 3         # same error+tool >=3 times in window
+HIGH_ERROR_RATE = 0.10  # 10%+ of calls error
+SLOW_P95_MS = 30_000  # 30s p95 considered slow
+HIGH_OVERTURN_RATE = 0.20  # 20%+ of decisions overturned by meta
+LOW_MERGE_RATE = 0.50  # <50% PR merge rate is suspicious
+REVERT_FLAG_THRESHOLD = 1  # any revert is worth surfacing
+REPEATED_FAILURE_MIN = 3  # same error+tool >=3 times in window
 
 # Confidence floors per heuristic — tuned conservative.
 CONFIDENCE_HIGH_ERROR = 0.80
@@ -42,7 +42,7 @@ CONFIDENCE_SLOW = 0.65
 CONFIDENCE_OVERTURN = 0.70
 CONFIDENCE_REPEATED_FAILURE = 0.85
 CONFIDENCE_LOW_MERGE = 0.55
-CONFIDENCE_REVERT = 1.00         # human always reviews; not auto-fixable
+CONFIDENCE_REVERT = 1.00  # human always reviews; not auto-fixable
 
 
 @dataclass(frozen=True)
@@ -51,8 +51,8 @@ class SuggestedFix:
     rationale: str
     confidence: float
     cheapness: Cheapness
-    target: str          # short identifier (tool name, file, etc.)
-    fix_kind: str        # 'config_tweak' | 'prompt_edit' | 'flag_for_review' | ...
+    target: str  # short identifier (tool name, file, etc.)
+    fix_kind: str  # 'config_tweak' | 'prompt_edit' | 'flag_for_review' | ...
     payload: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:

@@ -72,8 +72,7 @@ def test_synthesize_slow_p95_emits_timeout_bump():
     }
     r = synthesize(lf, _empty_pg(), _empty_gh())
     assert any(
-        f.target == "slow_tool" and f.fix_kind == "config_tweak"
-        and f.confidence == CONFIDENCE_SLOW
+        f.target == "slow_tool" and f.fix_kind == "config_tweak" and f.confidence == CONFIDENCE_SLOW
         for f in r.suggested_fixes
     )
 
@@ -108,9 +107,7 @@ def test_synthesize_repeated_failure_pattern_shape_also_works():
         ],
     }
     r = synthesize(_empty_lf(), pg, _empty_gh())
-    assert any(
-        "ConnectionError: timeout" in f.title for f in r.suggested_fixes
-    )
+    assert any("ConnectionError: timeout" in f.title for f in r.suggested_fixes)
 
 
 def test_synthesize_low_count_repeated_failure_skipped():
@@ -153,8 +150,9 @@ def test_synthesize_low_merge_rate_emits_expensive_review():
         "reverted_pr_numbers": [],
     }
     r = synthesize(_empty_lf(), _empty_pg(), gh)
-    matched = [f for f in r.suggested_fixes if f.target == "fleet"
-               and "merge rate" in f.title.lower()]
+    matched = [
+        f for f in r.suggested_fixes if f.target == "fleet" and "merge rate" in f.title.lower()
+    ]
     assert len(matched) == 1
     assert matched[0].cheapness == "expensive"
     assert matched[0].confidence == CONFIDENCE_LOW_MERGE
@@ -198,16 +196,31 @@ def test_synthesize_dedupes_same_target_and_kind_keeping_highest_confidence():
     from director.quality.synthesizer import _dedupe
 
     a = SuggestedFix(
-        title="A1", rationale="", confidence=0.5, cheapness="cheap",
-        target="x", fix_kind="config_tweak", payload={},
+        title="A1",
+        rationale="",
+        confidence=0.5,
+        cheapness="cheap",
+        target="x",
+        fix_kind="config_tweak",
+        payload={},
     )
     a2 = SuggestedFix(
-        title="A2", rationale="", confidence=0.9, cheapness="cheap",
-        target="x", fix_kind="config_tweak", payload={},
+        title="A2",
+        rationale="",
+        confidence=0.9,
+        cheapness="cheap",
+        target="x",
+        fix_kind="config_tweak",
+        payload={},
     )
     b = SuggestedFix(
-        title="B", rationale="", confidence=0.7, cheapness="cheap",
-        target="y", fix_kind="config_tweak", payload={},
+        title="B",
+        rationale="",
+        confidence=0.7,
+        cheapness="cheap",
+        target="y",
+        fix_kind="config_tweak",
+        payload={},
     )
     out = _dedupe([a, a2, b])
     titles = {f.title for f in out}
@@ -227,9 +240,7 @@ def test_synthesize_top_problems_capped_at_three_and_overall_confidence_is_mean(
     }
     r = synthesize(lf, _empty_pg(), _empty_gh())
     assert len(r.top_problems) == 3
-    expected = sum(f.confidence for f in r.suggested_fixes) / len(
-        r.suggested_fixes
-    )
+    expected = sum(f.confidence for f in r.suggested_fixes) / len(r.suggested_fixes)
     assert abs(r.confidence_score - expected) < 1e-9
 
 

@@ -36,8 +36,7 @@ import sentry_init  # noqa: E402,F401
 
 def _print_usage() -> int:
     print(
-        "usage: python -m director.cli "
-        "<cycle|perceive|ideate|act|digest|meta>",
+        "usage: python -m director.cli <cycle|perceive|ideate|act|digest|meta>",
         file=sys.stderr,
     )
     return 2
@@ -66,9 +65,9 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     import sentry_sdk as _sentry_sdk
+
     try:
         sys.exit(main())
     except Exception as _exc:
         _sentry_sdk.capture_exception(_exc)
         raise
-

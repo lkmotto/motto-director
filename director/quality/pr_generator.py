@@ -91,9 +91,7 @@ def is_configured() -> bool:
     if not shutil.which("gh"):
         return False
     return bool(
-        os.environ.get("GITHUB_TOKEN")
-        or os.environ.get("GH_TOKEN")
-        or os.environ.get("GITHUB_PAT")
+        os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_PAT")
     )
 
 
@@ -113,9 +111,7 @@ def generate(
     is_dry = dry_run if dry_run is not None else os.environ.get("DRY_RUN") == "1"
 
     threshold = confidence_threshold()
-    accepted = [f for f in report.suggested_fixes if f.confidence >= threshold][
-        :MAX_FIXES_PER_RUN
-    ]
+    accepted = [f for f in report.suggested_fixes if f.confidence >= threshold][:MAX_FIXES_PER_RUN]
     skipped: list[dict[str, Any]] = [
         {"title": f.title, "reason": "below_confidence_threshold", "confidence": f.confidence}
         for f in report.suggested_fixes
@@ -371,9 +367,7 @@ def _create_branch_with_file(
 
     # 3. Read existing file SHA on the branch (for upsert)
     sha_arg: list[str] = []
-    rc, stdout, _ = _gh_run(
-        ["api", f"repos/{repo}/contents/{file_path}?ref={branch}"]
-    )
+    rc, stdout, _ = _gh_run(["api", f"repos/{repo}/contents/{file_path}?ref={branch}"])
     if rc == 0:
         try:
             sha = json.loads(stdout).get("sha")

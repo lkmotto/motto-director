@@ -12,6 +12,7 @@ from director.ideate import NextMove
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 def _move(
     repo: str = "lkmotto/motto-director",
     kind: str = "file_issue",
@@ -55,6 +56,7 @@ def _patch_psycopg_cursor():
 # Mode detection
 # ---------------------------------------------------------------------------
 
+
 def test_manual_mode_off_by_default(monkeypatch):
     monkeypatch.delenv("DIRECTOR_APPROVAL_MODE", raising=False)
     assert queue.manual_mode_enabled() is False
@@ -78,6 +80,7 @@ def test_manual_mode_case_insensitive(monkeypatch):
 # ---------------------------------------------------------------------------
 # enqueue_moves
 # ---------------------------------------------------------------------------
+
 
 def test_enqueue_no_dsn_returns_errors(monkeypatch):
     monkeypatch.delenv("NEON_DATABASE_URL", raising=False)
@@ -133,6 +136,7 @@ def test_enqueue_other_exception_counts_as_error(monkeypatch):
 # Transitions
 # ---------------------------------------------------------------------------
 
+
 def test_approve_returns_true_when_row_updated(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgres://stub")
     fake_psycopg, conn, cur = _patch_psycopg_cursor()
@@ -186,6 +190,7 @@ def test_expire_stale(monkeypatch):
 # row_to_move
 # ---------------------------------------------------------------------------
 
+
 def test_row_to_move_reconstructs_dataclass():
     row = {
         "id": 1,
@@ -217,6 +222,7 @@ def test_row_to_move_reconstructs_dataclass():
 
 def test_row_to_move_payload_as_string_is_parsed():
     import json as _json
+
     row = {
         "id": 1,
         "repo": "r",
@@ -225,16 +231,18 @@ def test_row_to_move_payload_as_string_is_parsed():
         "rationale": "",
         "intent": "",
         "priority": 0,
-        "move_payload": _json.dumps({
-            "repo": "r",
-            "kind": "k",
-            "title": "t",
-            "rationale": "",
-            "prompt_for_claude_code": "",
-            "priority": 0,
-            "intent": "",
-            "code_changes": [],
-        }),
+        "move_payload": _json.dumps(
+            {
+                "repo": "r",
+                "kind": "k",
+                "title": "t",
+                "rationale": "",
+                "prompt_for_claude_code": "",
+                "priority": 0,
+                "intent": "",
+                "code_changes": [],
+            }
+        ),
     }
     m = queue.row_to_move(row)
     assert m.repo == "r"
@@ -244,6 +252,7 @@ def test_row_to_move_payload_as_string_is_parsed():
 # ---------------------------------------------------------------------------
 # list helpers
 # ---------------------------------------------------------------------------
+
 
 def test_list_pending_no_dsn(monkeypatch):
     monkeypatch.delenv("NEON_DATABASE_URL", raising=False)
