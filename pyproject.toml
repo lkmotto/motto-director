@@ -1,5 +1,5 @@
 [project]
-name = "motto-director"
+name = "motto_director"
 version = "0.1.0"
 description = "Self-aware autonomous orchestrator for the motto stack."
 readme = "README.md"
@@ -14,9 +14,8 @@ dependencies = [
     # in a stable resolver. observability._try_instrument() no-ops gracefully
     # when they're missing.
     "fastmcp>=2.10",
-    "psycopg[binary,
+    "psycopg[binary]>=3.2",
     "sentry-sdk[asyncio]",
-]>=3.2",
     "opentelemetry-api>=1.27",
     "opentelemetry-sdk>=1.27",
     "opentelemetry-exporter-otlp-proto-http>=1.27",
