@@ -1,10 +1,11 @@
 """Entrypoint: perceive → ideate → act loop. Designed for Northflank cron."""
 
 from __future__ import annotations
-import sys as _sys, pathlib as _pathlib  # noqa: E402
-_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent))
-import sentry_init  # noqa: E402,F401
 
+import pathlib as _pathlib
+import sys as _sys  # noqa: E402
+
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent))
 import asyncio
 import json
 import logging
@@ -16,6 +17,7 @@ from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime
 
+import sentry_init  # noqa: E402,F401
 from director import critic, fleet, orchestrator, policy, queue
 from director.act import act, fleet_run_id_var
 from director.concurrency import adaptive_session_limit

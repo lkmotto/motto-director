@@ -24,11 +24,14 @@ them once the Neon state-passing path lands.
 """
 
 from __future__ import annotations
-import sys as _sys, pathlib as _pathlib  # noqa: E402
-_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent))
-import sentry_init  # noqa: E402,F401
 
+import pathlib as _pathlib
+import sys as _sys  # noqa: E402
+
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent))
 import sys
+
+import sentry_init  # noqa: E402,F401
 
 
 def _print_usage() -> int:

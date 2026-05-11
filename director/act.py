@@ -337,7 +337,8 @@ def _verify_move(move: NextMove) -> ActResult:
         def _runner() -> None:
             box["r"] = asyncio.run(_call())
         t = threading.Thread(target=_runner)
-        t.start(); t.join(timeout=30)
+        t.start()
+        t.join(timeout=30)
         result = box.get("r", {})
     except Exception as exc:  # noqa: BLE001
         return ActResult(
