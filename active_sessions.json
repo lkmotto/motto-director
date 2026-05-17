@@ -1,1 +1,57 @@
-{}
+{
+  "d504f7d2-78b3-49b3-a96d-039ce19b5594": {
+    "session_id": "d504f7d2-78b3-49b3-a96d-039ce19b5594",
+    "run_id": "d4c1eae6-59d2-4f52-b48c-6a0685595d75",
+    "goal_id": "g1",
+    "task_title": "Implement continuous fleet state polling and droid spawning logic",
+    "prompt_summary": "Goal: motto-director should run continuously, polling the fleet state and GitHub, spawning parallel Factory droids based on active goals, ingesting completions, and reporting to ONA Fleet. Currently t",
+    "spawned_at": "2026-05-17T19:47:11.839573+00:00",
+    "status": "running",
+    "completed_at": null,
+    "artifact_id": null
+  },
+  "f87b6ff4-d1b7-48f3-b9ad-641280d5ca3a": {
+    "session_id": "f87b6ff4-d1b7-48f3-b9ad-641280d5ca3a",
+    "run_id": "4e81ecc5-7c8f-4735-a4cb-4d02327209c4",
+    "goal_id": "g2",
+    "task_title": "Add Mercury and Reggora AMC integration with auto-bid logic",
+    "prompt_summary": "Goal: appraisalos-bidding must integrate with major AMCs (Mercury, Reggora, ServiceLink at minimum) and auto-bid on incoming orders within 2 minutes. Start with Mercury and Reggora. For each: implemen",
+    "spawned_at": "2026-05-17T19:47:12.426256+00:00",
+    "status": "running",
+    "completed_at": null,
+    "artifact_id": null
+  },
+  "4aaba8d3-9902-4c40-97c9-c9226503da3f": {
+    "session_id": "4aaba8d3-9902-4c40-97c9-c9226503da3f",
+    "run_id": "1993ed23-4197-45f2-9276-f703d24af073",
+    "goal_id": "g3",
+    "task_title": "Implement MLS comparable search with proximity/time/similarity ranking",
+    "prompt_summary": "Goal: comp-hunter must find high-quality MLS comparables. Implement: 1) MLS data source integration (e.g., via BridgeMLS or similar API), 2) Filtering by property type, beds, baths, sqft, 3) Ranking a",
+    "spawned_at": "2026-05-17T19:47:12.992085+00:00",
+    "status": "running",
+    "completed_at": null,
+    "artifact_id": null
+  },
+  "87a90535-9dfc-4ec5-a53a-43854258bc2d": {
+    "session_id": "87a90535-9dfc-4ec5-a53a-43854258bc2d",
+    "run_id": "eb82f467-767e-403a-8919-64ec75cd4b0d",
+    "goal_id": "g4",
+    "task_title": "Implement full pipeline from order receipt to report delivery",
+    "prompt_summary": "Goal: motto-appraisal-pipeline should handle the full appraisal workflow: order receipt => assign appraiser => comp-hunter integration for comps => bidding integration for AMC bid => report generation",
+    "spawned_at": "2026-05-17T19:47:21.605170+00:00",
+    "status": "running",
+    "completed_at": null,
+    "artifact_id": null
+  },
+  "8d64dc1c-92f2-4541-8877-9a929c5c6690": {
+    "session_id": "8d64dc1c-92f2-4541-8877-9a929c5c6690",
+    "run_id": "4eb9e1df-2c8d-4cc0-a754-8108ee000d3c",
+    "goal_id": "g7",
+    "task_title": "Build ReadyWrite order monitoring service",
+    "prompt_summary": "Goal: rw-order-monitor must actively watch ReadyWrite for new appraisal orders and trigger downstream systems (bidding, pipeline). Implement: 1) ReadyWrite API integration (authentication, order listi",
+    "spawned_at": "2026-05-17T19:47:22.198806+00:00",
+    "status": "running",
+    "completed_at": null,
+    "artifact_id": null
+  }
+}

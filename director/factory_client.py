@@ -1,4 +1,4 @@
-"""Async client for the Factory API v1."""
+"""Async client for the Factory API v0."""
 from __future__ import annotations
 
 import asyncio
@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 import httpx
 
-FACTORY_API_BASE = os.getenv("FACTORY_API_BASE", "https://api.factory.ai/v1")
+FACTORY_API_BASE = os.getenv("FACTORY_API_BASE", "https://api.factory.ai/api/v0")
 LEGION_COMPUTER_ID = os.getenv(
     "FACTORY_COMPUTER_ID",
     os.getenv("LEGION_COMPUTER_ID", "fc715237-e805-47f3-a590-0b2561fea3e0"),
@@ -52,7 +52,6 @@ class FactoryClient:
             resp = await client.get(url, headers=self._headers())
             resp.raise_for_status()
             data = resp.json()
-        # API may return {messages: [...]} or a plain list
         if isinstance(data, list):
             return data
         return data.get("messages", data.get("items", []))
@@ -63,18 +62,31 @@ class FactoryClient:
         computer_id: Optional[str] = None,
         tags: Optional[list[str]] = None,
     ) -> dict[str, Any]:
-        """Create a new droid session. Returns the session object."""
-        url = f"{self._base}/sessions"
+        """Create a new droid session and send the initial prompt. Returns the session object."""
+        sessions_url = f"{self._base}/sessions"
         body: dict[str, Any] = {
-            "prompt": prompt,
-            "computer_id": computer_id or self._computer_id,
+            "computerId": computer_id or self._computer_id,
         }
         if tags:
-            body["tags"] = tags
+            body["sessionSettings"] = {"tags": [{"name": t} for t in tags]}
+
         async with httpx.AsyncClient(timeout=self._timeout) as client:
-            resp = await client.post(url, json=body, headers=self._headers())
+            resp = await client.post(sessions_url, json=body, headers=self._headers())
             resp.raise_for_status()
-            return resp.json()
+            session = resp.json()
+
+        session_id = self._extract_session_id(session)
+        if session_id and prompt:
+            msg_url = f"{self._base}/sessions/{session_id}/messages"
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                msg_resp = await client.post(
+                    msg_url,
+                    json={"text": prompt},
+                    headers=self._headers(),
+                )
+                msg_resp.raise_for_status()
+
+        return session
 
     async def spawn_swarm(self, prompts: list[str]) -> list[str]:
         if not prompts:
@@ -119,14 +131,17 @@ class FactoryClient:
     def _extract_session_id(self, payload: Any) -> str:
         if not isinstance(payload, dict):
             return ""
-        sid = payload.get("id") or payload.get("session_id")
-        if isinstance(sid, str):
-            return sid
+        # v0 API returns sessionId
+        for key in ("sessionId", "id", "session_id"):
+            sid = payload.get(key)
+            if isinstance(sid, str) and sid:
+                return sid
         data = payload.get("data")
         if isinstance(data, dict):
-            sid = data.get("id") or data.get("session_id")
-            if isinstance(sid, str):
-                return sid
+            for key in ("sessionId", "id", "session_id"):
+                sid = data.get(key)
+                if isinstance(sid, str) and sid:
+                    return sid
         return ""
 
     def _extract_status(self, payload: Any) -> str:

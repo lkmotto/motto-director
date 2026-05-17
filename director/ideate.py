@@ -4,6 +4,7 @@ import os
 import asyncio
 
 import anthropic
+import httpx
 
 from .perceive import PerceptionBundle
 
@@ -11,6 +12,9 @@ log = logging.getLogger(__name__)
 
 ANTHROPIC_KEY = os.getenv('ANTHROPIC_API_KEY', '')
 IDEATE_MODEL = os.getenv('IDEATE_MODEL', 'claude-haiku-4-5')
+DEEPSEEK_KEY = os.getenv('DEEPSEEK_API', os.getenv('DEEPSEEK_API_KEY', ''))
+DEEPSEEK_MODEL = os.getenv('DEEPSEEK_MODEL', 'deepseek-chat')
+DEEPSEEK_BASE_URL = 'https://api.deepseek.com/v1'
 
 
 def _build_context(perception: PerceptionBundle) -> str:
@@ -94,20 +98,41 @@ async def ideate(perception: PerceptionBundle, max_droids: int = 5) -> list:
     system = SYSTEM_PROMPT.format(max_droids=slots)
     user = USER_TEMPLATE.format(context=context)
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
     loop = asyncio.get_event_loop()
 
-    def _call():
-        return client.messages.create(
-            model=IDEATE_MODEL,
-            max_tokens=2048,
-            system=system,
-            messages=[{'role': 'user', 'content': user}],
-        )
+    async def _call_anthropic() -> str:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+        def _sync():
+            return client.messages.create(
+                model=IDEATE_MODEL,
+                max_tokens=2048,
+                system=system,
+                messages=[{'role': 'user', 'content': user}],
+            )
+        response = await loop.run_in_executor(None, _sync)
+        return response.content[0].text.strip()
 
-    try:
-        response = await loop.run_in_executor(None, _call)
-        raw = response.content[0].text.strip()
+    async def _call_deepseek() -> str:
+        if not DEEPSEEK_KEY:
+            raise RuntimeError('DEEPSEEK_API key not configured')
+        payload = {
+            'model': DEEPSEEK_MODEL,
+            'max_tokens': 2048,
+            'messages': [
+                {'role': 'system', 'content': system},
+                {'role': 'user', 'content': user},
+            ],
+        }
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(
+                f'{DEEPSEEK_BASE_URL}/chat/completions',
+                json=payload,
+                headers={'Authorization': f'Bearer {DEEPSEEK_KEY}', 'Content-Type': 'application/json'},
+            )
+            resp.raise_for_status()
+            return resp.json()['choices'][0]['message']['content'].strip()
+
+    def _parse_raw(raw: str) -> list:
         if raw.startswith('```'):
             raw = raw.split('```')[1]
             if raw.startswith('json'):
@@ -116,9 +141,32 @@ async def ideate(perception: PerceptionBundle, max_droids: int = 5) -> list:
         if not isinstance(tasks, list):
             log.warning('ideate returned non-list: %s', raw[:200])
             return []
+        return tasks
+
+    raw = None
+    if ANTHROPIC_KEY:
+        try:
+            raw = await _call_anthropic()
+            log.debug('ideate used Anthropic')
+        except Exception as exc:
+            log.warning('Anthropic ideate failed (%s), trying DeepSeek fallback', exc)
+
+    if raw is None and DEEPSEEK_KEY:
+        try:
+            raw = await _call_deepseek()
+            log.info('ideate used DeepSeek fallback')
+        except Exception as exc:
+            log.error('DeepSeek ideate also failed: %s', exc)
+
+    if raw is None:
+        log.error('ideate: all LLM backends failed')
+        return []
+
+    try:
+        tasks = _parse_raw(raw)
         tasks = [t for t in tasks if t.get('goal_id') not in active_goal_ids]
         tasks.sort(key=lambda t: t.get('priority', 9))
         return tasks[:slots]
     except Exception as exc:
-        log.error('ideate failed: %s', exc)
+        log.error('ideate parse failed: %s | raw=%s', exc, raw[:200])
         return []
