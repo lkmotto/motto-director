@@ -2,7 +2,7 @@ import json
 import os
 from pathlib import Path
 
-GOALS_FILE = Path(os.getenv('GOALS_FILE', str(Path(__file__).parent.parent / 'goals.json')))
+GOALS_FILE = Path(os.getenv('GOALS_FILE', str(Path(__file__).parent.parent / 'goals.example.json')))
 
 
 class GoalStore:
@@ -13,8 +13,12 @@ class GoalStore:
 
     def _load(self):
         if self.path.exists():
-            with open(self.path) as f:
-                self._data = json.load(f)
+            with open(self.path, encoding='utf-8') as f:
+                raw = f.read()
+            cleaned = '\n'.join(
+                line for line in raw.splitlines() if not line.lstrip().startswith('//')
+            ).strip()
+            self._data = json.loads(cleaned or '{"goals":[]}')
         else:
             self._data = {'goals': []}
 

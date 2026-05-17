@@ -1,3 +1,4 @@
+// Self-directed goals - only used with --self-directed flag (future autonudge phase)
 {
   "goals": [
     {"id":"g1","title":"Director Autonomy Loop","description":"motto-director runs continuously, perceives fleet+github state, spawns parallel Factory droids, ingests completions, and reports everything to ONA Fleet","repos":["motto-director"],"priority":1,"status":"in_progress"},
@@ -9,3 +10,4 @@
     {"id":"g7","title":"RW Order Monitoring","description":"rw-order-monitor watches ReadyWrite for new orders and triggers bidding/pipeline flows automatically","repos":["rw-order-monitor"],"priority":1,"status":"active"}
   ]
 }
+
