@@ -1,19 +1,20 @@
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 from .factory_client import FactoryClient
 from .fleet_client import FleetClient
-from .session_store import SessionStore
+from .session_store import SessionStore, SessionMeta
 from .goals import GoalStore
 from .completion_handler import handle_completions
 
 log = logging.getLogger(__name__)
 
-BATCH_SIZE = 3  # max concurrent spawns per act cycle
+BATCH_SIZE = 3
 
 
 async def act(
-    tasks: list[dict],
+    tasks: list,
     fleet: FleetClient,
     factory: FactoryClient,
     session_store: SessionStore,
@@ -30,7 +31,7 @@ async def act(
     except Exception as exc:
         log.warning('Heartbeat failed: %s', exc)
 
-    # 2. Handle completions before spawning new work
+    # 2. Handle completions
     completed = await handle_completions(fleet, factory, session_store, goals)
     if completed:
         log.info('Handled %d completed sessions', len(completed))
@@ -49,12 +50,11 @@ async def act(
                 log.error('spawn_swarm failed for batch %d: %s', i, exc)
                 continue
 
-            # Register each session
             for task, sid in zip(batch, session_ids):
                 if not sid:
-                    log.warning('Empty session_id returned for task %s', task.get('task_title'))
+                    log.warning('Empty session_id for task %s', task.get('task_title'))
                     continue
-                run_id = None
+                run_id = ''
                 try:
                     run_id = await fleet.record_run_start(
                         agent_name='motto-director',
@@ -64,14 +64,17 @@ async def act(
                 except Exception as exc:
                     log.warning('record_run_start failed: %s', exc)
 
-                session_store.add(
+                meta = SessionMeta(
                     session_id=sid,
-                    goal_id=task.get('goal_id', ''),
-                    repo=task.get('repo', ''),
-                    task_title=task.get('task_title', ''),
                     run_id=run_id,
+                    goal_id=task.get('goal_id', ''),
+                    task_title=task.get('task_title', ''),
+                    prompt_summary=task.get('prompt', '')[:200],
+                    spawned_at=datetime.now(timezone.utc).isoformat(),
+                    status='running',
                 )
-                log.info('Spawned droid session=%s goal=%s task=%s', sid, task.get('goal_id'), task.get('task_title'))
+                session_store.add(meta)
+                log.info('Spawned session=%s goal=%s task=%s', sid, meta.goal_id, meta.task_title)
 
     # 4. Log cycle summary
     try:

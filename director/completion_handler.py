@@ -17,8 +17,8 @@ async def handle_completions(
     running = session_store.get_running()
     completed = []
 
-    for session_info in running:
-        sid = session_info['session_id']
+    for session_meta in running:
+        sid = session_meta.session_id
         try:
             idle = await factory.is_idle(sid)
         except Exception as exc:
@@ -28,8 +28,8 @@ async def handle_completions(
         if not idle:
             continue
 
-        log.info('Session %s completed (goal=%s)', sid, session_info.get('goal_id'))
-        completed.append(session_info)
+        log.info('Session %s completed (goal=%s)', sid, session_meta.goal_id)
+        completed.append(session_meta)
 
         try:
             output = await factory.get_final_output(sid)
@@ -37,9 +37,9 @@ async def handle_completions(
             log.warning('Could not get output for session %s: %s', sid, exc)
             output = f'(output unavailable: {exc})'
 
-        run_id = session_info.get('run_id')
-        goal_id = session_info.get('goal_id')
-        task_title = session_info.get('task_title', '')
+        run_id = session_meta.run_id
+        goal_id = session_meta.goal_id
+        task_title = session_meta.task_title
 
         try:
             await fleet.record_artifact(
@@ -63,6 +63,9 @@ async def handle_completions(
             if goal:
                 goals.update_goal_status(goal_id, 'active', f'Last completed task: {task_title}')
 
-        session_store.remove(sid)
+        try:
+            session_store.mark_complete(sid)
+        except Exception as exc:
+            log.warning('mark_complete failed for %s: %s', sid, exc)
 
     return completed
