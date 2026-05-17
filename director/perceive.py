@@ -1,18 +1,19 @@
 import asyncio
 from dataclasses import dataclass, field
+from typing import List
 
 from .fleet_client import FleetClient
-from .session_store import SessionStore
+from .session_store import SessionStore, SessionMeta
 from .goals import GoalStore
 
 
 @dataclass
 class PerceptionBundle:
-    fleet_agents: list[dict] = field(default_factory=list)
-    recent_events: list[dict] = field(default_factory=list)
-    open_intents: list[dict] = field(default_factory=list)
-    active_sessions: dict = field(default_factory=dict)
-    active_goals: list[dict] = field(default_factory=list)
+    fleet_agents: list = field(default_factory=list)
+    recent_events: list = field(default_factory=list)
+    open_intents: list = field(default_factory=list)
+    active_sessions: list = field(default_factory=list)  # list[SessionMeta]
+    active_goals: list = field(default_factory=list)
 
 
 async def perceive(fleet: FleetClient, session_store: SessionStore, goals: GoalStore) -> PerceptionBundle:
@@ -27,7 +28,6 @@ async def perceive(fleet: FleetClient, session_store: SessionStore, goals: GoalS
         return_exceptions=True,
     )
 
-    # Degrade gracefully on partial failures
     if isinstance(fleet_agents, Exception):
         fleet_agents = []
     if isinstance(recent_events, Exception):

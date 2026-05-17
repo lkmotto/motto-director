@@ -1,0 +1,95 @@
+{
+  "_comment": "Northflank service definition for motto-director.",
+  "_comment2": "Use as a reference when creating the service in the Northflank dashboard.",
+  "_comment3": "All secrets below are set via: Service > Settings > Environment Variables (NOT in this file).",
+
+  "service": {
+    "name": "motto-director",
+    "description": "Autonomous perceive->ideate->act orchestrator. Perceives ONA Fleet state, ideates tasks for each active goal, and spawns Factory droids to execute them.",
+    "serviceType": "deployment",
+    "billing": {
+      "deploymentPlan": "nf-compute-50",
+      "_comment": "nf-compute-50 = 0.5 vCPU / 512MB RAM. Sufficient for async Python + HTTP calls."
+    },
+    "deployment": {
+      "instances": 1,
+      "_comment": "Singleton orchestrator — do NOT scale horizontally. The cycle lock in main.py protects against double-spawning but a single replica is cleaner."
+    },
+    "image": {
+      "registryProvider": "ghcr",
+      "repository": "ghcr.io/lkmotto/motto-director",
+      "tag": "latest",
+      "_comment": "GitHub Actions builds :latest and :sha-<hash> on every push to main."
+    },
+    "ports": [],
+    "_ports_comment": "motto-director is a background worker — no HTTP port is exposed. Health is monitored via ONA Fleet heartbeats (heartbeat every cycle).",
+    "healthChecks": [],
+    "_health_comment": "No HTTP health check. Monitor via: ONA Fleet dashboard -> motto-director last_seen_at, or Northflank logs filtered by director.cycle.done."
+  },
+
+  "internalNetworking": {
+    "_comment": "Director calls ONA Fleet MCP over HTTPS (external URL). No internal Northflank DNS required."
+  },
+
+  "northflankEnvVars": {
+    "_comment": "Set these in Northflank: Service > Settings > Environment Variables",
+    "_comment2": "Mark credential values as Secret (encrypted at rest).",
+
+    "required": {
+      "MOTTO_MCP_AUTH_TOKEN": {
+        "_comment": "Bearer token for ONA Fleet MCP server. Must match the token set in motto-mcp-server.",
+        "isSecret": true
+      },
+      "FACTORY_API_KEY": {
+        "_comment": "Factory.ai API key for spawning droids.",
+        "isSecret": true
+      },
+      "ANTHROPIC_API_KEY": {
+        "_comment": "Anthropic API key. Used by spawned droids via the Factory platform.",
+        "isSecret": true
+      }
+    },
+
+    "defaults": {
+      "ONA_FLEET_URL": "https://p01--motto-mcp-server--hq2dk45g4bfc.code.run/mcp",
+      "CYCLE_INTERVAL_SECONDS": "120",
+      "MAX_PARALLEL_DROIDS": "5",
+      "FACTORY_COMPUTER_ID": "fc715237-e805-47f3-a590-0b2561fea3e0",
+      "FACTORY_MODEL": "claude-sonnet-4-6",
+      "LOG_LEVEL": "INFO"
+    },
+
+    "optional": {
+      "DIRECTOR_DRY_RUN": {
+        "value": "0",
+        "_comment": "Set to 1 to log proposed spawns without actually calling Factory API. Safe for rollout testing."
+      },
+      "FACTORY_BASE_URL": {
+        "value": "https://api.factory.ai/v1",
+        "_comment": "Override Factory API base URL."
+      }
+    }
+  },
+
+  "githubActionsSecrets": {
+    "_comment": "Set these in GitHub repo Settings > Secrets and variables > Actions for CI/CD",
+    "required": [
+      "NF_API_TOKEN",
+      "NF_PROJECT_ID",
+      "NF_SERVICE_ID",
+      "GHCR_PAT"
+    ]
+  },
+
+  "dopplerConfig": {
+    "_comment": "Doppler project: motto-core, config: prd",
+    "_comment2": "Pull command: doppler run --project motto-core --config prd -- python main.py",
+    "project": "motto-core",
+    "config": "prd",
+    "mappedSecrets": [
+      "MOTTO_MCP_AUTH_TOKEN",
+      "FACTORY_API_KEY",
+      "ANTHROPIC_API_KEY"
+    ]
+  }
+}

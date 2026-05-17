@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import asyncio
 
 import anthropic
 
@@ -13,8 +14,7 @@ IDEATE_MODEL = os.getenv('IDEATE_MODEL', 'claude-haiku-4-5')
 
 
 def _build_context(perception: PerceptionBundle) -> str:
-    active_goal_ids = {s['goal_id'] for s in perception.active_sessions.values()
-                       if s.get('status') == 'running'}
+    active_goal_ids = {s.goal_id for s in perception.active_sessions if s.status == 'running'}
 
     goals_summary = []
     for g in perception.active_goals:
@@ -24,9 +24,9 @@ def _build_context(perception: PerceptionBundle) -> str:
         )
 
     running_sessions = [
-        f"  session={s['session_id'][:8]} goal={s['goal_id']} task={s['task_title']}"
-        for s in perception.active_sessions.values()
-        if s.get('status') == 'running'
+        f"  session={s.session_id[:8]} goal={s.goal_id} task={s.task_title}"
+        for s in perception.active_sessions
+        if s.status == 'running'
     ]
 
     recent_event_lines = [
@@ -70,23 +70,22 @@ Rules:
 
 USER_TEMPLATE = """{context}
 
-Based on the above state, decide what tasks to spawn now. 
+Based on the above state, decide what tasks to spawn now.
 Return JSON array only (no markdown, no explanation):
 [{{"goal_id":"...", "repo":"...", "task_title":"...", "prompt":"...", "priority":1}}]
 """
 
 
-async def ideate(perception: PerceptionBundle, max_droids: int = 5) -> list[dict]:
+async def ideate(perception: PerceptionBundle, max_droids: int = 5) -> list:
     if not ANTHROPIC_KEY:
         log.warning('ANTHROPIC_API_KEY not set, skipping ideate')
         return []
 
-    active_goal_ids = {s['goal_id'] for s in perception.active_sessions.values()
-                       if s.get('status') == 'running'}
-
-    # If all active goals already have droids running, nothing to do
+    active_goal_ids = {s.goal_id for s in perception.active_sessions if s.status == 'running'}
     available_goals = [g for g in perception.active_goals if g['id'] not in active_goal_ids]
-    slots = max_droids - len([s for s in perception.active_sessions.values() if s.get('status') == 'running'])
+    running_count = sum(1 for s in perception.active_sessions if s.status == 'running')
+    slots = max_droids - running_count
+
     if slots <= 0 or not available_goals:
         log.info('No slots available or all goals covered, skipping ideate')
         return []
@@ -96,8 +95,6 @@ async def ideate(perception: PerceptionBundle, max_droids: int = 5) -> list[dict
     user = USER_TEMPLATE.format(context=context)
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
-    # Use sync call in executor to avoid anthropic SDK async issues
-    import asyncio
     loop = asyncio.get_event_loop()
 
     def _call():
@@ -111,7 +108,6 @@ async def ideate(perception: PerceptionBundle, max_droids: int = 5) -> list[dict
     try:
         response = await loop.run_in_executor(None, _call)
         raw = response.content[0].text.strip()
-        # Strip markdown code fences if present
         if raw.startswith('```'):
             raw = raw.split('```')[1]
             if raw.startswith('json'):
@@ -120,11 +116,9 @@ async def ideate(perception: PerceptionBundle, max_droids: int = 5) -> list[dict
         if not isinstance(tasks, list):
             log.warning('ideate returned non-list: %s', raw[:200])
             return []
-        # Filter out tasks for goals already running
         tasks = [t for t in tasks if t.get('goal_id') not in active_goal_ids]
-        # Sort by priority
         tasks.sort(key=lambda t: t.get('priority', 9))
         return tasks[:slots]
-    except (json.JSONDecodeError, Exception) as exc:
+    except Exception as exc:
         log.error('ideate failed: %s', exc)
         return []
