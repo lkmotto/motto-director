@@ -20,6 +20,14 @@ class SessionMeta:
     status: str          # 'running' | 'completed' | 'failed'
     completed_at: Optional[str] = None
     artifact_id: Optional[int] = None
+    attempt: int = 1
+    max_retries: int = 3
+    original_prompt: str = ''
+    intent_kind: str = ''
+    intent_payload: Optional[dict] = None
+    intent_source_agent: str = ''
+    last_error: Optional[str] = None
+    previous_session_id: Optional[str] = None
 
     @classmethod
     def from_dict(cls, d: dict) -> "SessionMeta":

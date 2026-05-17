@@ -170,13 +170,31 @@ class FleetClient:
             args['status'] = status
         await self.call_tool('ona-mcp___heartbeat', args)
 
-    async def consume_open_intents(self, agent_name: str) -> list[dict]:
-        result = await self.call_tool('ona-mcp___consume_open_intents', {'agent_name': agent_name})
+    async def consume_open_intents(self, agent_name: str, limit: int = 10) -> list[dict]:
+        result = await self.call_tool(
+            'ona-mcp___consume_open_intents',
+            {'agent_name': agent_name, 'limit': limit},
+        )
         if isinstance(result, list):
             return result
         if isinstance(result, dict):
             return result.get('intents', result.get('data', []))
         return []
+
+    async def signal_intent(
+        self,
+        target_agent: str,
+        kind: str,
+        payload: dict,
+        source_agent: str = 'motto-director',
+    ):
+        args = {
+            'target_agent': target_agent,
+            'kind': kind,
+            'payload': payload,
+            'source_agent': source_agent,
+        }
+        await self.call_tool('ona-mcp___signal_intent', args)
 
     async def get_recent_events(self, since_minutes: int = 60, agent_name: str = None,
                                  kind: str = None) -> list[dict]:

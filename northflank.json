@@ -54,6 +54,9 @@
       "ONA_FLEET_URL": "https://p01--motto-mcp-server--hq2dk45g4bfc.code.run/mcp",
       "CYCLE_INTERVAL_SECONDS": "120",
       "MAX_PARALLEL_DROIDS": "5",
+      "MAX_RETRIES": "3",
+      "SUCCESS_KEYWORDS": "DONE,SUCCESS,COMPLETE,tests pass,exit 0",
+      "FAILURE_KEYWORDS": "ERROR,FAILED,blocked,exception,cannot proceed",
       "FACTORY_COMPUTER_ID": "fc715237-e805-47f3-a590-0b2561fea3e0",
       "FACTORY_MODEL": "claude-sonnet-4-6",
       "LOG_LEVEL": "INFO"
