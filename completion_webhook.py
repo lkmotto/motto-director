@@ -101,15 +101,17 @@ async def factory_completion(payload: CompletionPayload):
 
     if meta.status != "running":
         # Already processed — return cached result
+        already_success = meta.status == "completed"
         return CompletionResponse(
             session_id=meta.session_id,
-            success=meta.status == "completed",
+            success=already_success,
             summary=f"Already {meta.status}",
             artifact_id=meta.artifact_id,
+            error=None if already_success else f"session status={meta.status}",
         )
 
     handler = _get_handler()
-    result = await handler.handle(meta)
+    result = await handler.handle(meta, status=payload.status)
 
     return CompletionResponse(
         session_id=result.session_id,
