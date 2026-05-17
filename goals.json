@@ -1,0 +1,11 @@
+{
+  "goals": [
+    {"id":"g1","title":"Director Autonomy Loop","description":"motto-director runs continuously, perceives fleet+github state, spawns parallel Factory droids, ingests completions, and reports everything to ONA Fleet","repos":["motto-director"],"priority":1,"status":"in_progress"},
+    {"id":"g2","title":"AMC Bidding Coverage","description":"appraisalos-bidding handles all major AMC integrations (Mercury, Reggora, ServiceLink, etc) and auto-bids on incoming orders within 2 minutes","repos":["appraisalos-bidding"],"priority":1,"status":"active"},
+    {"id":"g3","title":"Comp Hunter Quality","description":"comp-hunter finds high-quality MLS comparables with proper filtering, ranking by proximity/time/similarity, and returns structured JSON","repos":["comp-hunter"],"priority":1,"status":"active"},
+    {"id":"g4","title":"Appraisal Pipeline Automation","description":"motto-appraisal-pipeline handles full workflow from order receipt to report delivery, integrating comp-hunter and bidding","repos":["motto-appraisal-pipeline"],"priority":1,"status":"active"},
+    {"id":"g5","title":"SDR Outreach Pipeline","description":"motto-sdr-agent identifies AMC targets, drafts personalized emails, tracks responses and follow-ups","repos":["motto-sdr-agent"],"priority":2,"status":"active"},
+    {"id":"g6","title":"Social Content Engine","description":"motto-social-agent and motto-shortform produce and post real estate content on schedule across platforms","repos":["motto-social-agent","motto-shortform"],"priority":3,"status":"active"},
+    {"id":"g7","title":"RW Order Monitoring","description":"rw-order-monitor watches ReadyWrite for new orders and triggers bidding/pipeline flows automatically","repos":["rw-order-monitor"],"priority":1,"status":"active"}
+  ]
+}
