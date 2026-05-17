@@ -16,12 +16,12 @@ MAX_RETRIES = int(os.getenv('MAX_RETRIES', '3'))
 def _extract_session_id(payload: dict) -> str:
     if not isinstance(payload, dict):
         return ''
-    sid = payload.get('id') or payload.get('session_id')
+    sid = payload.get('sessionId') or payload.get('id') or payload.get('session_id')
     if isinstance(sid, str):
         return sid
     data = payload.get('data')
     if isinstance(data, dict):
-        sid = data.get('id') or data.get('session_id')
+        sid = data.get('sessionId') or data.get('id') or data.get('session_id')
         if isinstance(sid, str):
             return sid
     return ''

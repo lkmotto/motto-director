@@ -7,10 +7,11 @@ import httpx
 
 _ID = itertools.count(1)
 
-ONA_URL = os.getenv(
+_raw_url = os.getenv(
     'ONA_FLEET_URL',
     os.getenv('MOTTO_MCP_URL', 'https://ona-mcp-proxy.ljm32901.workers.dev/mcp'),
 )
+ONA_URL = _raw_url if _raw_url.rstrip('/').endswith('/mcp') else _raw_url.rstrip('/') + '/mcp'
 ONA_TOKEN = os.getenv('MOTTO_MCP_AUTH_TOKEN', '')
 
 
