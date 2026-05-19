@@ -3,24 +3,25 @@ LinkedIn recruiting MCP server (stub).
 
 Exposes four tools to motto-director and any spawned Factory/Ona agent:
 
-    - search_candidates(query, location, filters, limit)
+    - search_candidates(query, location, filters)
     - get_profile(linkedin_url)
     - send_connection_request(profile_url, message)
-    - list_connections(start, count)
+    - list_connections()
 
-Credentials are pulled from environment variables that motto-director
-populates from Doppler at boot:
+Auth model: email + password via the unofficial `linkedin-api`
+(tomquirk) Python library. Credentials are loaded at boot from:
 
-    LINKEDIN_LI_AT_COOKIE      (required for actions and unofficial search)
-    LINKEDIN_JSESSIONID        (required, CSRF token)
-    LINKEDIN_USER_AGENT        (optional, pinned UA)
-    LINKEDIN_DAILY_INVITE_CAP  (optional, int, default 20)
-    PROXYCURL_API_KEY          (optional; enrichment routes to ProxyCurl)
+    LINKEDIN_EMAIL
+    LINKEDIN_PASSWORD
+
+These are populated by motto-director from Doppler. The companion
+`motto-credential-grabber/setup_linkedin_creds.py` wizard is the
+intended way to put them into Doppler in the first place.
 
 Run as a stdio MCP server:
     python -m integrations.linkedin_mcp_server
 
-Self-test:
+Self-test (does not call LinkedIn, only verifies env vars are loaded):
     python -m integrations.linkedin_mcp_server --self-test
 """
 
@@ -29,11 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-import random
 import sys
-import time
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any
 
 log = logging.getLogger("linkedin_mcp")
@@ -43,199 +40,114 @@ logging.basicConfig(
 )
 
 
-DEFAULT_UA = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-)
+LINKEDIN_EMAIL = os.environ.get("LINKEDIN_EMAIL")
+LINKEDIN_PASSWORD = os.environ.get("LINKEDIN_PASSWORD")
 
 
-@dataclass
-class Config:
-    li_at: str | None = field(default_factory=lambda: os.environ.get("LINKEDIN_LI_AT_COOKIE"))
-    jsessionid: str | None = field(default_factory=lambda: os.environ.get("LINKEDIN_JSESSIONID"))
-    user_agent: str = field(default_factory=lambda: os.environ.get("LINKEDIN_USER_AGENT", DEFAULT_UA))
-    proxycurl_key: str | None = field(default_factory=lambda: os.environ.get("PROXYCURL_API_KEY"))
-    daily_invite_cap: int = field(
-        default_factory=lambda: int(os.environ.get("LINKEDIN_DAILY_INVITE_CAP", "20"))
-    )
-
-    def require_session(self) -> None:
-        missing = [k for k, v in (("LINKEDIN_LI_AT_COOKIE", self.li_at),
-                                  ("LINKEDIN_JSESSIONID", self.jsessionid)) if not v]
-        if missing:
-            raise RuntimeError(f"LinkedIn MCP missing required env vars: {missing}")
+def _require_creds() -> None:
+    missing = [
+        name for name, val in (
+            ("LINKEDIN_EMAIL", LINKEDIN_EMAIL),
+            ("LINKEDIN_PASSWORD", LINKEDIN_PASSWORD),
+        ) if not val
+    ]
+    if missing:
+        raise RuntimeError(
+            f"LinkedIn MCP missing required env vars: {missing}. "
+            "Run motto-credential-grabber/setup_linkedin_creds.py to populate Doppler."
+        )
 
 
-CFG = Config()
-
-
-# ---------------------------------------------------------------------------
-# Throttle / rate limiter
-# ---------------------------------------------------------------------------
-
-_invite_log: list[datetime] = []
-
-
-def _human_jitter(min_s: float = 3.0, max_s: float = 7.0) -> None:
-    time.sleep(random.uniform(min_s, max_s))
-
-
-def _under_invite_cap() -> bool:
-    cutoff = datetime.now(timezone.utc).timestamp() - 86_400
-    recent = [t for t in _invite_log if t.timestamp() >= cutoff]
-    _invite_log[:] = recent
-    return len(recent) < CFG.daily_invite_cap
-
-
-def _record_invite() -> None:
-    _invite_log.append(datetime.now(timezone.utc))
-
-
-# ---------------------------------------------------------------------------
-# Client factories
-# ---------------------------------------------------------------------------
-
-def _linkedin_client():
+def _client():
     """
-    Returns a tomquirk/linkedin-api client. Lazily imported so the rest of
-    motto-director doesn't pay the import cost.
+    Lazily import and construct a `linkedin-api` client using email/password.
+
+    NOTE: `linkedin-api` is an unofficial library that scrapes LinkedIn's
+    Voyager API. It violates LinkedIn's ToS and may trigger account
+    challenges or restrictions. Use a dedicated burner account.
     """
-    CFG.require_session()
+    _require_creds()
     try:
         from linkedin_api import Linkedin
     except ImportError as exc:
         raise RuntimeError(
-            "linkedin-api not installed. Add `linkedin-api` to requirements.txt."
+            "linkedin-api not installed. `pip install linkedin-api`."
         ) from exc
-
-    cookies = {"li_at": CFG.li_at, "JSESSIONID": CFG.jsessionid}
-    return Linkedin(
-        username="",
-        password="",
-        cookies=cookies,
-        user_agent=CFG.user_agent,
-        refresh_cookies=False,
-    )
-
-
-def _proxycurl_get(linkedin_url: str) -> dict[str, Any]:
-    import httpx
-
-    if not CFG.proxycurl_key:
-        raise RuntimeError("PROXYCURL_API_KEY not set")
-    resp = httpx.get(
-        "https://nubela.co/proxycurl/api/v2/linkedin",
-        params={"url": linkedin_url, "use_cache": "if-present"},
-        headers={"Authorization": f"Bearer {CFG.proxycurl_key}"},
-        timeout=30.0,
-    )
-    resp.raise_for_status()
-    return resp.json()
+    return Linkedin(LINKEDIN_EMAIL, LINKEDIN_PASSWORD)
 
 
 # ---------------------------------------------------------------------------
-# Tools
+# Tool stubs
 # ---------------------------------------------------------------------------
 
 def search_candidates(
     query: str,
     location: str | None = None,
     filters: dict[str, Any] | None = None,
-    limit: int = 25,
 ) -> list[dict[str, Any]]:
-    limit = max(1, min(limit, 100))
-    client = _linkedin_client()
-    filters = filters or {}
+    """
+    Search LinkedIn for candidates.
 
-    kwargs: dict[str, Any] = {
-        "keywords": query,
-        "limit": limit,
-    }
-    if location:
-        kwargs["regions"] = [location]
-    for src, dst in (
-        ("current_company", "current_company"),
-        ("past_companies", "past_companies"),
-        ("industries", "industries"),
-        ("schools", "schools"),
-        ("connection_of", "connection_of"),
-        ("network_depths", "network_depths"),
-    ):
-        if src in filters:
-            kwargs[dst] = filters[src]
+    Args:
+        query: keywords to match against headline/title/skills,
+            e.g. "senior backend engineer go".
+        location: optional free-form location filter, e.g. "Berlin" or
+            "Remote, Europe".
+        filters: optional structured filters such as
+            `current_company`, `past_companies`, `industries`,
+            `schools`, `connection_of`, `network_depths`.
 
-    _human_jitter(1.5, 3.5)
-    raw = client.search_people(**kwargs)
-
-    out: list[dict[str, Any]] = []
-    for r in raw:
-        public_id = r.get("public_id") or r.get("publicIdentifier") or ""
-        out.append({
-            "public_id": public_id,
-            "urn": r.get("urn_id") or r.get("urn"),
-            "name": (r.get("name") or
-                     f"{r.get('firstName', '')} {r.get('lastName', '')}".strip()),
-            "headline": r.get("headline") or r.get("jobtitle"),
-            "location": r.get("location"),
-            "current_company": r.get("current_company") or r.get("jobtitle"),
-            "profile_url": f"https://www.linkedin.com/in/{public_id}" if public_id else None,
-        })
-    return out
+    Returns:
+        A list of candidate dicts with `public_id`, `name`, `headline`,
+        `location`, `current_company`, and `profile_url`.
+    """
+    raise NotImplementedError("search_candidates: stub, wire linkedin-api search_people()")
 
 
 def get_profile(linkedin_url: str) -> dict[str, Any]:
-    if CFG.proxycurl_key:
-        data = _proxycurl_get(linkedin_url)
-        data["_source"] = "proxycurl"
-        return data
+    """
+    Fetch a single LinkedIn profile.
 
-    client = _linkedin_client()
-    public_id = linkedin_url.rstrip("/").split("/")[-1]
-    _human_jitter()
-    profile = client.get_profile(public_id=public_id)
-    contact = {}
-    try:
-        contact = client.get_profile_contact_info(public_id=public_id)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("contact info fetch failed: %s", exc)
-    return {**profile, "contact_info": contact, "_source": "linkedin-api"}
+    Args:
+        linkedin_url: full URL (https://www.linkedin.com/in/<public_id>/)
+            or bare `public_id`.
+
+    Returns:
+        Full profile dict (experience, education, skills, summary,
+        contact info where visible).
+    """
+    raise NotImplementedError("get_profile: stub, wire linkedin-api get_profile()")
 
 
 def send_connection_request(profile_url: str, message: str | None = None) -> dict[str, Any]:
-    if message and len(message) > 300:
-        return {"status": "error", "detail": "message exceeds 300 chars"}
-    if not _under_invite_cap():
-        return {
-            "status": "limited",
-            "detail": f"daily invite cap of {CFG.daily_invite_cap} reached",
-        }
+    """
+    Send a connection request to a LinkedIn profile.
 
-    client = _linkedin_client()
-    public_id = profile_url.rstrip("/").split("/")[-1]
-    _human_jitter(4.0, 9.0)
-    try:
-        urn = client.get_profile(public_id=public_id).get("profile_id")
-        if not urn:
-            return {"status": "error", "detail": "could not resolve profile urn"}
-        ok = client.add_connection(profile_public_id=public_id, message=message or "")
-        if ok is False:
-            return {"status": "error", "detail": "add_connection returned False"}
-        _record_invite()
-        return {"status": "sent", "detail": f"invite sent to {public_id}"}
-    except Exception as exc:  # noqa: BLE001
-        return {"status": "error", "detail": str(exc)}
+    Args:
+        profile_url: full URL or bare `public_id`.
+        message: optional personalized note, max 300 chars per LinkedIn's
+            invite limit.
+
+    Returns:
+        Dict with `status` (one of `sent`, `already_connected`,
+        `limited`, `error`) and a human-readable `detail`.
+    """
+    raise NotImplementedError("send_connection_request: stub, wire linkedin-api add_connection()")
 
 
-def list_connections(start: int = 0, count: int = 50) -> list[dict[str, Any]]:
-    count = max(1, min(count, 100))
-    client = _linkedin_client()
-    _human_jitter(1.0, 2.5)
-    raw = client.get_profile_connections(client.get_user_profile().get("plainId", ""))
-    return raw[start:start + count]
+def list_connections() -> list[dict[str, Any]]:
+    """
+    List the authenticated user's first-degree connections.
+
+    Returns:
+        A list of connection dicts. The shape mirrors `linkedin-api`'s
+        `get_profile_connections` output.
+    """
+    raise NotImplementedError("list_connections: stub, wire linkedin-api get_profile_connections()")
 
 
 # ---------------------------------------------------------------------------
-# MCP stdio loop (minimal JSON-RPC-ish dispatcher)
+# MCP stdio loop
 # ---------------------------------------------------------------------------
 
 TOOLS = {
@@ -250,14 +162,16 @@ def _dispatch(line: str) -> dict[str, Any]:
     try:
         msg = json.loads(line)
     except json.JSONDecodeError as exc:
-        return {"error": f"invalid json: {exc}"}
+        return {"ok": False, "error": f"invalid json: {exc}"}
 
     tool = msg.get("tool")
     args = msg.get("args", {}) or {}
     if tool not in TOOLS:
-        return {"error": f"unknown tool: {tool}", "known": list(TOOLS)}
+        return {"ok": False, "error": f"unknown tool: {tool}", "known": list(TOOLS)}
     try:
         return {"ok": True, "result": TOOLS[tool](**args)}
+    except NotImplementedError as exc:
+        return {"ok": False, "error": str(exc), "stub": True}
     except Exception as exc:  # noqa: BLE001
         log.exception("tool %s raised", tool)
         return {"ok": False, "error": str(exc)}
@@ -276,12 +190,15 @@ def _stdio_loop() -> None:
 
 def _self_test() -> int:
     try:
-        results = search_candidates("droid", limit=1)
-    except Exception as exc:  # noqa: BLE001
+        _require_creds()
+    except RuntimeError as exc:
         log.error("self-test failed: %s", exc)
         return 1
-    log.info("self-test ok, got %d result(s)", len(results))
-    print(json.dumps(results, indent=2))
+    log.info(
+        "self-test ok: LINKEDIN_EMAIL=%s (password set: %s)",
+        LINKEDIN_EMAIL,
+        bool(LINKEDIN_PASSWORD),
+    )
     return 0
 
 
