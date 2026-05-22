@@ -114,7 +114,10 @@ class RepoCache:
     # ------------------------------------------------------------------
 
     def _run_git(
-        self, args: list[str], *, cwd: Path | None = None,
+        self,
+        args: list[str],
+        *,
+        cwd: Path | None = None,
         timeout: int = DEFAULT_TIMEOUT_S,
     ) -> tuple[int, str, str]:
         """Run a git command and return (rc, stdout, stderr)."""
@@ -226,7 +229,11 @@ class RepoCache:
     # ------------------------------------------------------------------
 
     def read_file(
-        self, repo_slug: str, rel_path: str, *, max_bytes: int = 50_000,
+        self,
+        repo_slug: str,
+        rel_path: str,
+        *,
+        max_bytes: int = 50_000,
     ) -> str:
         """Read a file from the local clone. Returns '' if missing.
 
@@ -293,7 +300,10 @@ class RepoCache:
         return out
 
     def recent_commits(
-        self, repo_slug: str, *, n: int = 10,
+        self,
+        repo_slug: str,
+        *,
+        n: int = 10,
     ) -> list[dict[str, str]]:
         """git log -n {n} --pretty=… Local read; no REST calls."""
         path = self.repo_path(repo_slug)
@@ -322,9 +332,7 @@ class RepoCache:
             if len(parts) != 4:
                 continue
             sha, author, date, msg = parts
-            out.append(
-                {"sha": sha, "author": author, "date": date, "msg": msg}
-            )
+            out.append({"sha": sha, "author": author, "date": date, "msg": msg})
         return out
 
 

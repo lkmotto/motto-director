@@ -36,8 +36,7 @@ def test_epic_plan_payload_round_trip():
 def test_executor_picks_first_step_when_nothing_applied(monkeypatch):
     steps = [
         EpicStep(order=1, title="step one", kind="spawn_session", repo="lkmotto/x"),
-        EpicStep(order=2, title="step two", kind="spawn_session",
-                 repo="lkmotto/x", depends_on=[1]),
+        EpicStep(order=2, title="step two", kind="spawn_session", repo="lkmotto/x", depends_on=[1]),
     ]
     epic = _make_epic(steps, epic_id=42)
     monkeypatch.setattr(epic_executor, "list_active_epics", lambda: [epic])
@@ -57,8 +56,9 @@ def test_executor_skips_blocked_step(monkeypatch):
     blocked and the executor should pick step 1 first.
     """
     steps = [
-        EpicStep(order=2, title="needs one", kind="spawn_session",
-                 repo="lkmotto/x", depends_on=[1]),
+        EpicStep(
+            order=2, title="needs one", kind="spawn_session", repo="lkmotto/x", depends_on=[1]
+        ),
         EpicStep(order=1, title="root", kind="spawn_session", repo="lkmotto/x"),
     ]
     epic = _make_epic(steps)
@@ -72,8 +72,7 @@ def test_executor_skips_blocked_step(monkeypatch):
 def test_executor_advances_after_step_applied(monkeypatch):
     steps = [
         EpicStep(order=1, title="root", kind="spawn_session", repo="lkmotto/x"),
-        EpicStep(order=2, title="next", kind="spawn_session",
-                 repo="lkmotto/x", depends_on=[1]),
+        EpicStep(order=2, title="next", kind="spawn_session", repo="lkmotto/x", depends_on=[1]),
     ]
     epic = _make_epic(steps)
     monkeypatch.setattr(epic_executor, "list_active_epics", lambda: [epic])
@@ -121,7 +120,7 @@ def test_planner_parser_validates_shape(monkeypatch):
         '"repo":"lkmotto/x","rationale":"r","depends_on":[1]},'
         '{"order":3,"title":"c","kind":"spawn_session",'
         '"repo":"lkmotto/x","rationale":"r","depends_on":[2]}'
-        ']}]}'
+        "]}]}"
     )
     epics = orchestrator._parse_planner_epics(good, run_id="r1")
     assert len(epics) == 1
@@ -131,13 +130,17 @@ def test_planner_parser_validates_shape(monkeypatch):
 
 def test_planner_parser_drops_too_few_steps():
     from director import orchestrator
-    bad = '{"epics":[{"title":"t","kpi_ref":"k","steps":[' \
+
+    bad = (
+        '{"epics":[{"title":"t","kpi_ref":"k","steps":['
         '{"order":1,"title":"only","kind":"file_issue","repo":"lkmotto/x"}]}]}'
+    )
     assert orchestrator._parse_planner_epics(bad, run_id="r1") == []
 
 
 def test_planner_parser_handles_empty():
     from director import orchestrator
+
     assert orchestrator._parse_planner_epics("", run_id="r1") == []
     assert orchestrator._parse_planner_epics("not json", run_id="r1") == []
     assert orchestrator._parse_planner_epics('{"epics":[]}', run_id="r1") == []

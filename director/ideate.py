@@ -108,9 +108,7 @@ CLAUDE_MAX_TIMEOUT_S = 120
 CLAUDE_MAX_BETA = "oauth-2025-04-20"
 CLAUDE_MAX_API_VERSION = "2023-06-01"
 CLAUDE_MAX_URL = "https://api.anthropic.com/v1/messages"
-CLAUDE_CODE_SYSTEM_PREFIX = (
-    "You are Claude Code, Anthropic's official CLI for Claude."
-)
+CLAUDE_CODE_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude."
 
 _FAILOVER_STATUSES: frozenset[int] = frozenset({401, 402, 429, 500, 502, 503, 504})
 
@@ -199,9 +197,7 @@ def _coerce_move(raw: dict) -> NextMove | None:
     if isinstance(raw_changes, list):
         for c in raw_changes:
             if isinstance(c, dict) and "path" in c and "content" in c:
-                code_changes.append(
-                    {"path": str(c["path"]), "content": str(c["content"])}
-                )
+                code_changes.append({"path": str(c["path"]), "content": str(c["content"])})
     epic_id_raw = raw.get("epic_id")
     step_order_raw = raw.get("step_order")
     try:
@@ -209,9 +205,7 @@ def _coerce_move(raw: dict) -> NextMove | None:
     except (TypeError, ValueError):
         epic_id_val = None
     try:
-        step_order_val = (
-            int(step_order_raw) if step_order_raw is not None else None
-        )
+        step_order_val = int(step_order_raw) if step_order_raw is not None else None
     except (TypeError, ValueError):
         step_order_val = None
     return NextMove(
@@ -391,9 +385,7 @@ def _call_claude_max(system: str, user_msg: str) -> _ProviderResult:
             )
 
     if parsed_body is None:
-        raise _ProviderHTTPError(
-            502, f"claude CLI bad JSON: {stdout_text[:600]}"
-        )
+        raise _ProviderHTTPError(502, f"claude CLI bad JSON: {stdout_text[:600]}")
 
     text = parsed_body.get("result") or ""
     usage = parsed_body.get("usage") or {}
@@ -433,9 +425,7 @@ def _call_anthropic(client: Anthropic, system: str, user_msg: str) -> _ProviderR
         system=system,
         messages=[{"role": "user", "content": user_msg}],
     )
-    text = "".join(
-        block.text for block in response.content if getattr(block, "type", "") == "text"
-    )
+    text = "".join(block.text for block in response.content if getattr(block, "type", "") == "text")
     usage = getattr(response, "usage", None)
     return _ProviderResult(
         text=text,

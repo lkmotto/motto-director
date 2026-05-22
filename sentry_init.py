@@ -15,19 +15,18 @@ Environment:
     SENTRY_TRACES_SAMPLE_RATE  - traces sample rate, defaults to ``0.1``.
     GIT_SHA / RELEASE_SHA      - explicit release SHA; otherwise read from git.
 """
+
 from __future__ import annotations
 
 import functools
 import os
 import subprocess
-from typing import Any, Callable, TypeVar
+from collections.abc import Callable
 
 import sentry_sdk
 
 AGENT_NAME = "motto-director"
 DEFAULT_HOST = "northflank"
-
-_F = TypeVar("_F", bound=Callable[..., Any])
 
 
 def _git_sha() -> str:
@@ -36,9 +35,7 @@ def _git_sha() -> str:
         return sha
     try:
         return (
-            subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
-            )
+            subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL)
             .decode()
             .strip()
         )
@@ -66,11 +63,11 @@ def init_sentry(agent: str = AGENT_NAME, host: str | None = None) -> bool:
     return True
 
 
-def capture_main_loop(func: _F) -> _F:
+def capture_main_loop[**P, R](func: Callable[P, R]) -> Callable[P, R]:
     """Decorator: capture any exception escaping the main loop, then re-raise."""
 
     @functools.wraps(func)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         try:
             return func(*args, **kwargs)
         except Exception as e:  # noqa: BLE001 - we re-raise after capturing
