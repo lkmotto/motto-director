@@ -1,5 +1,5 @@
-"""Act: execute top-N moves (file_issue, spawn_session, merge_pr,
-nudge_pipeline, compound_pr)."""
+"""Act: execute top-N moves (file_issue, spawn_session, factory_droid,
+merge_pr, nudge_pipeline, compound_pr)."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 
 import httpx
 
-from director import fleet, policy
+from director import factory_client, fleet, policy
 from director.compound import (
     CodeChange,
     CompoundEntry,
@@ -262,6 +262,172 @@ def _spawn_session(client: httpx.Client, move: NextMove, snapshot: Snapshot) -> 
         status="executed",
         detail=session_url,
     )
+
+
+def _factory_api_key() -> str:
+    return os.environ.get("FACTORY_API_KEY", "").strip()
+
+
+def _resolve_droid_tag(move: NextMove) -> str:
+    """Pick which custom droid to invoke based on the move's repo + intent.
+
+    Maps to droid definitions under .factory/droids/*.md. Factory routes by
+    droid tag on the session, not by model selection here, so we just need
+    to attach the right tag string. Falls back to 'factory-orchestrator'
+    (the meta-droid that decides and delegates).
+    """
+    repo = (move.repo or "").lower()
+    intent = (move.intent or "").lower()
+    title = (move.title or "").lower()
+    haystack = f"{repo} {intent} {title}"
+    if "doppler" in haystack or "secret" in haystack:
+        return "doppler-sync"
+    if "northflank" in haystack or "deploy" in haystack or "cron" in haystack:
+        return "northflank-ops"
+    if "fleet" in haystack or "report" in haystack or "audit" in haystack:
+        return "ona-fleet-reporter"
+    if (
+        "mcp-server" in haystack
+        or "motto-director" in haystack
+        or "github" in haystack
+        or "pr " in haystack
+        or "merge" in haystack
+    ):
+        return "github-ops"
+    return "factory-orchestrator"
+
+
+async def _factory_spawn_async(prompt: str, tags: list[str]) -> dict[str, object]:
+    """Async bridge: run the FactoryClient call from sync act() context."""
+    client = factory_client.FactoryClient()
+    session = await client.spawn_session(prompt=prompt, tags=tags)
+    sid = client._extract_session_id(session)
+    return {"session_id": sid, "raw": session}
+
+
+def _spawn_factory_droid(move: NextMove, snapshot: Snapshot) -> ActResult:
+    """Spawn a Factory droid session for this move.
+
+    Parallel to _spawn_session (Claude Code) but routes to Factory's hosted
+    droids using the .factory/droids/*.md role definitions. Per fleet doctrine
+    we NEVER silently fall back to Claude — if FACTORY_API_KEY is missing we
+    skip and let the director re-route on the next cycle. Honors the same
+    policy gates as _spawn_session so a Factory droid can't run on a stale
+    or oversized target either.
+    """
+    target = _find_issue(snapshot, move.repo, move.title) or _find_pr(
+        snapshot, move.repo, move.title
+    )
+    if target is not None:
+        eligible, reason = policy.is_eligible_for_spawn(target)
+        if not eligible:
+            return ActResult(move=move, status="skipped", detail=f"policy: {reason}")
+    size = policy.estimate_session_diff_size(move.prompt_for_claude_code)
+    if size > policy.MAX_FILES_PER_SESSION:
+        return ActResult(
+            move=move,
+            status="skipped",
+            detail=f"policy: prompt scope estimate {size} > {policy.MAX_FILES_PER_SESSION}",
+        )
+    if not _factory_api_key():
+        _log("factory_droid.skipped", reason="no_api_key", repo=move.repo)
+        return ActResult(
+            move=move,
+            status="skipped",
+            detail=(
+                "no FACTORY_API_KEY; factory_droid is optional. "
+                "Doctrine: do not fall back to Claude Code."
+            ),
+        )
+    if not move.prompt_for_claude_code:
+        return ActResult(
+            move=move,
+            status="skipped",
+            detail="missing prompt_for_claude_code (factory_droid reuses the prompt field)",
+        )
+
+    fleet_run_id = fleet_run_id_var.get()
+    pending_token = uuid.uuid4().hex[:12]
+    droid_tag = _resolve_droid_tag(move)
+    tags = [f"droid:{droid_tag}", f"repo:{move.repo}", f"intent:{move.intent[:32]}"]
+
+    _fire_and_forget(
+        fleet.record_artifact(
+            run_id=fleet_run_id,
+            kind="factory_session_prompt",
+            ref=pending_token,
+            meta={
+                "prompt": move.prompt_for_claude_code,
+                "intent": move.intent,
+                "repo": move.repo,
+                "droid": droid_tag,
+            },
+        )
+    )
+
+    try:
+        result = asyncio.run(_factory_spawn_async(prompt=move.prompt_for_claude_code, tags=tags))
+    except RuntimeError:
+        # We're already inside an event loop (act() is wrapped in _run_async).
+        # Use a fresh loop in a worker thread so we don't collide.
+        import threading
+
+        result_holder: dict[str, object] = {}
+        err_holder: dict[str, BaseException] = {}
+
+        def _runner() -> None:
+            try:
+                result_holder["r"] = asyncio.run(
+                    _factory_spawn_async(prompt=move.prompt_for_claude_code, tags=tags)
+                )
+            except BaseException as e:  # noqa: BLE001 — propagate any error type
+                err_holder["e"] = e
+
+        t = threading.Thread(target=_runner, daemon=True)
+        t.start()
+        t.join(timeout=60)
+        if "e" in err_holder:
+            return ActResult(
+                move=move,
+                status="error",
+                detail=f"factory spawn failed: {err_holder['e']}",
+            )
+        if "r" not in result_holder:
+            return ActResult(move=move, status="error", detail="factory spawn timed out (>60s)")
+        result = result_holder["r"]  # type: ignore[assignment]
+    except Exception as e:  # noqa: BLE001
+        return ActResult(move=move, status="error", detail=f"factory spawn error: {e}")
+
+    session_id = str(result.get("session_id", ""))
+    session_url = f"https://factory.ai/sessions/{session_id}" if session_id else ""
+
+    _fire_and_forget(
+        fleet.record_artifact(
+            run_id=fleet_run_id,
+            kind="factory_session",
+            ref=session_url,
+            meta={
+                "session_id": session_id,
+                "droid": droid_tag,
+                "pending_token": pending_token,
+            },
+        )
+    )
+    _fire_and_forget(
+        fleet.record_decision(
+            run_id=fleet_run_id,
+            choice="spawned_factory_droid",
+            rationale=move.intent,
+            evidence={
+                "repo": move.repo,
+                "title": move.title,
+                "droid": droid_tag,
+                "session_url": session_url,
+            },
+        )
+    )
+
+    return ActResult(move=move, status="executed", detail=session_url)
 
 
 def _verify_move(move: NextMove) -> ActResult:
@@ -556,6 +722,8 @@ def act(
                     results.append(_file_critique_issue(client, move))
                 elif move.kind == "spawn_session":
                     results.append(_spawn_session(client, move, snapshot))
+                elif move.kind == "factory_droid":
+                    results.append(_spawn_factory_droid(move, snapshot))
                 elif move.kind == "merge_pr":
                     results.append(_merge_pr(client, move, snapshot))
                 elif move.kind == "nudge_pipeline":

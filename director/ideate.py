@@ -44,6 +44,7 @@ from director.perceive import Snapshot
 
 MoveKind = Literal[
     "spawn_session",
+    "factory_droid",
     "file_issue",
     "merge_pr",
     "nudge_pipeline",
@@ -56,6 +57,7 @@ MoveKind = Literal[
 _VALID_KINDS: frozenset[str] = frozenset(
     (
         "spawn_session",
+        "factory_droid",
         "file_issue",
         "merge_pr",
         "nudge_pipeline",
@@ -128,17 +130,24 @@ Hard rules:
 1. Every move MUST include explicit `intent` (1-2 sentences explaining WHY now,
    referencing concrete signals from the snapshot — PR numbers, ages, statuses).
    Moves without intent are dropped.
-2. `kind` is one of: spawn_session, file_issue, merge_pr, nudge_pipeline,
-   compound_pr, noop, verify_move.
+2. `kind` is one of: spawn_session, factory_droid, file_issue, merge_pr,
+   nudge_pipeline, compound_pr, noop, verify_move.
    - `verify_move` triggers an outcome verification on a previously-applied
      move. Use this AFTER applying a move, when you want to confirm the
      move actually achieved its KPI intent. Set `target_move_id` in the
      code_changes/payload area to the pending_moves.id you want verified.
      Day 1 verifiers only support kind=noop and kind=merge_pr; other kinds
      return inconclusive until per-repo verifiers are wired.
+   - `factory_droid` spawns a Factory.ai droid session (parallel to
+     spawn_session for Claude Code). Prefer factory_droid when the work
+     maps cleanly to one of the .factory/droids/*.md roles: doppler-sync
+     (secrets), northflank-ops (deploys/crons), github-ops (PRs/issues/
+     merges), ona-fleet-reporter (audits/fleet health), or factory-
+     orchestrator (multi-step meta work). Reuses `prompt_for_claude_code`
+     as the prompt field. Never silently fall back from one to the other.
 3. `priority` is an integer 1-5 (1 = highest).
-4. `prompt_for_claude_code` is required for spawn_session moves; it must be a
-   self-contained brief a fresh Claude Code session can act on.
+4. `prompt_for_claude_code` is required for spawn_session AND factory_droid
+   moves; it must be a self-contained brief a fresh session can act on.
 5. For `compound_pr` moves, populate `code_changes` as a list of
    {path, content} objects with the full new file content. The director
    appends these as a single commit to a long-lived rolling PR per repo.
