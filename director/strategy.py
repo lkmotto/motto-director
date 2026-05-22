@@ -86,7 +86,5 @@ def format_for_prompt(intent: str) -> str:
         return ""
     return (
         "===== STRATEGIC INTENT (read first; every move should advance one of "
-        "these) =====\n"
-        + intent.rstrip()
-        + "\n===== END STRATEGIC INTENT =====\n\n"
+        "these) =====\n" + intent.rstrip() + "\n===== END STRATEGIC INTENT =====\n\n"
     )

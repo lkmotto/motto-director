@@ -1,0 +1,10 @@
+# Managed by fleet automation (MOT-29).
+# Run hooks against staged changes before each commit:
+#   pre-commit install
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format

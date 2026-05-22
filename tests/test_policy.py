@@ -131,9 +131,7 @@ def test_auto_merge_blocked_when_ci_failing():
 
 def test_auto_merge_allows_ci_bot_without_review():
     pr = _pr(labels=["director-ok"], ci_status="success", approvals=0)
-    ok, reason = policy.is_eligible_for_auto_merge(
-        pr, "success", author="github-actions[bot]"
-    )
+    ok, reason = policy.is_eligible_for_auto_merge(pr, "success", author="github-actions[bot]")
     assert ok is True
 
 
@@ -157,9 +155,7 @@ def test_auto_merge_blocks_self_mod_even_with_label(monkeypatch):
 def test_auto_merge_self_mod_passes_with_opt_in(monkeypatch):
     monkeypatch.setenv("DIRECTOR_ALLOW_SELF_MOD", "true")
     pr = _pr(repo=SELF_REPO, labels=["director-ok"], approvals=1)
-    ok, _ = policy.is_eligible_for_auto_merge(
-        pr, "success", changed_paths=["director/policy.py"]
-    )
+    ok, _ = policy.is_eligible_for_auto_merge(pr, "success", changed_paths=["director/policy.py"])
     assert ok is True
 
 
@@ -255,10 +251,7 @@ def test_filter_moves_drops_oversized_prompt_even_when_labeled():
     snap = _snapshot(issues=[issue])
     moves = [
         _move_spawn(
-            prompt=(
-                "rewrite src/a.py src/b.py src/c.py src/d.py and refactor "
-                "all of the helpers"
-            )
+            prompt=("rewrite src/a.py src/b.py src/c.py src/d.py and refactor all of the helpers")
         )
     ]
     kept = policy.filter_moves(moves, snap)

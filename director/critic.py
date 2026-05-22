@@ -46,12 +46,8 @@ import httpx
 
 from director.ideate import NextMove, _coerce_move
 
-DEEPSEEK_BASE_URL = os.environ.get(
-    "DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"
-)
-DEEPSEEK_DEFAULT_MODEL = os.environ.get(
-    "DEEPSEEK_MODEL", "deepseek-v4-flash"
-)
+DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+DEEPSEEK_DEFAULT_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash")
 DEEPSEEK_TIMEOUT_S = float(os.environ.get("DEEPSEEK_TIMEOUT_S", "120"))
 
 # Body bytes shown to the critic. Larger-than-this is summarized in the
@@ -63,12 +59,14 @@ _VALID_VERDICTS: frozenset[str] = frozenset({"pass", "flag", "block"})
 
 # Artifact kinds that are typically image-bearing — the critic flags
 # these as capability_gap until vision support is added.
-_VISION_REQUIRED_KINDS: frozenset[str] = frozenset({
-    "thumbnail",
-    "image",
-    "screenshot",
-    "video_frame",
-})
+_VISION_REQUIRED_KINDS: frozenset[str] = frozenset(
+    {
+        "thumbnail",
+        "image",
+        "screenshot",
+        "video_frame",
+    }
+)
 
 
 def _log(event: str, **fields: object) -> None:
@@ -155,9 +153,7 @@ def _coerce_verdict(raw: dict) -> tuple[str, str | None, list[str], str]:
         verdict = "flag"
     severity_raw = raw.get("severity")
     severity: str | None
-    if isinstance(severity_raw, str) and severity_raw.lower() in (
-        "low", "medium", "high"
-    ):
+    if isinstance(severity_raw, str) and severity_raw.lower() in ("low", "medium", "high"):
         severity = severity_raw.lower()
     else:
         severity = None if verdict == "pass" else "low"
@@ -189,7 +185,7 @@ def _extract_json(text: str) -> dict:
         end = text.rfind("}")
         if start != -1 and end != -1 and end > start:
             try:
-                return json.loads(text[start:end + 1])
+                return json.loads(text[start : end + 1])
             except json.JSONDecodeError:
                 return {}
         return {}
@@ -305,11 +301,7 @@ async def _critique_one(
         )
 
     latency = int((datetime.now(UTC) - started).total_seconds() * 1000)
-    text = (
-        data.get("choices", [{}])[0]
-        .get("message", {})
-        .get("content", "")
-    )
+    text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
     usage = data.get("usage", {}) or {}
     parsed = _extract_json(text)
     if not isinstance(parsed, dict):
@@ -380,25 +372,24 @@ def _result_to_move(r: CritiqueResult) -> NextMove | None:
         f"### Issues\n{issues_block}\n\n"
         f"### Suggested fix\n{r.suggested_fix or '(none)'}"
     )
-    title = (
-        f"[output-critic] {r.verdict.upper()}: "
-        f"{r.agent_name} {r.kind} #{r.artifact_id}"
-    )[:240]
+    title = (f"[output-critic] {r.verdict.upper()}: {r.agent_name} {r.kind} #{r.artifact_id}")[:240]
     intent = (
         f"output_critic flagged artifact #{r.artifact_id} "
         f"({r.kind}) from {r.agent_name}; "
         f"verdict={r.verdict} severity={r.severity or 'n/a'}; "
         f"send_blocking={r.send_blocking}."
     )[:500]
-    return _coerce_move({
-        "repo": r.repo,
-        "kind": "file_critique_issue",
-        "title": title,
-        "rationale": rationale[:1000],
-        "prompt_for_claude_code": "",
-        "priority": priority,
-        "intent": intent,
-    })
+    return _coerce_move(
+        {
+            "repo": r.repo,
+            "kind": "file_critique_issue",
+            "title": title,
+            "rationale": rationale[:1000],
+            "prompt_for_claude_code": "",
+            "priority": priority,
+            "intent": intent,
+        }
+    )
 
 
 async def _fetch_pending(
@@ -409,9 +400,7 @@ async def _fetch_pending(
     """Pull pending-review artifacts via MCP. Empty list on any failure
     (this lens then no-ops for the tick — same shape as parallel_ideate).
     """
-    if not (
-        os.environ.get("MOTTO_MCP_URL") and os.environ.get("MOTTO_MCP_AUTH_TOKEN")
-    ):
+    if not (os.environ.get("MOTTO_MCP_URL") and os.environ.get("MOTTO_MCP_AUTH_TOKEN")):
         _log("critic.skipped", reason="mcp_not_configured")
         return []
     try:
@@ -419,6 +408,7 @@ async def _fetch_pending(
         # tests can monkeypatch _fetch_pending without touching network.
         from fastmcp import Client
         from fastmcp.client.auth import BearerAuth
+
         url = os.environ["MOTTO_MCP_URL"]
         token = os.environ["MOTTO_MCP_AUTH_TOKEN"]
         async with Client(url, auth=BearerAuth(token)) as c:
@@ -444,13 +434,12 @@ async def _mark_reviewed(
     """Write the verdict back via MCP. Best-effort — failures don't block
     the move from being queued (the move itself carries the critique).
     """
-    if not (
-        os.environ.get("MOTTO_MCP_URL") and os.environ.get("MOTTO_MCP_AUTH_TOKEN")
-    ):
+    if not (os.environ.get("MOTTO_MCP_URL") and os.environ.get("MOTTO_MCP_AUTH_TOKEN")):
         return False
     try:
         from fastmcp import Client
         from fastmcp.client.auth import BearerAuth
+
         url = os.environ["MOTTO_MCP_URL"]
         token = os.environ["MOTTO_MCP_AUTH_TOKEN"]
         async with Client(url, auth=BearerAuth(token)) as c:
@@ -516,11 +505,16 @@ async def critique_artifacts(
     sem = asyncio.Semaphore(max_concurrency)
 
     async with httpx.AsyncClient() as client:
+
         async def _run(art: dict[str, Any]) -> CritiqueResult:
             async with sem:
                 return await _critique_one(
-                    client, artifact=art, api_key=api_key, model=model,
+                    client,
+                    artifact=art,
+                    api_key=api_key,
+                    model=model,
                 )
+
         results = await asyncio.gather(*(_run(a) for a in pending))
 
     # Write verdicts back (concurrent, best-effort).
@@ -540,6 +534,7 @@ async def critique_artifacts(
             review_status=_verdict_to_status(r.verdict),
             critique=critique_payload,
         )
+
     await asyncio.gather(*(_write_back(r) for r in results))
 
     moves: list[NextMove] = []
@@ -569,6 +564,9 @@ def is_enabled() -> bool:
 
     Default OFF until rolled out, mirroring DIRECTOR_PARALLEL_SUBAGENTS.
     """
-    return os.environ.get(
-        "DIRECTOR_OUTPUT_CRITIC", ""
-    ).strip().lower() in ("1", "true", "yes", "on")
+    return os.environ.get("DIRECTOR_OUTPUT_CRITIC", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )

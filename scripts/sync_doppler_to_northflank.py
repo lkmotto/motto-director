@@ -27,6 +27,7 @@ Side-effects:
 The script *never* echoes secret values — only key names, lengths, and
 whether each key was added/changed/unchanged/dropped.
 """
+
 from __future__ import annotations
 
 import base64
@@ -49,12 +50,14 @@ DOPPLER_META = ("DOPPLER_PROJECT", "DOPPLER_CONFIG", "DOPPLER_ENVIRONMENT")
 
 # Keys we explicitly REFUSE to mirror to Northflank, even if Doppler
 # has them. Reasons noted inline.
-DENYLIST = frozenset({
-    # The Doppler PAT itself. If it leaks via a Northflank container,
-    # an attacker can rewrite every Doppler secret. Never mirror.
-    "DOPPLER_PERSONAL_TOKEN",
-    "DOPPLER_TOKEN",
-})
+DENYLIST = frozenset(
+    {
+        # The Doppler PAT itself. If it leaks via a Northflank container,
+        # an attacker can rewrite every Doppler secret. Never mirror.
+        "DOPPLER_PERSONAL_TOKEN",
+        "DOPPLER_TOKEN",
+    }
+)
 
 # Aliases: Doppler stores some keys under one name, but agents read them
 # under another (legacy/canonical). Sync writes BOTH sides so neither
@@ -191,9 +194,7 @@ def transform(doppler: dict[str, str]) -> dict[str, str]:
         sec = merged.get("LANGFUSE_SECRET_KEY", "")
         if pub and sec and "TODO" not in pub and "TODO" not in sec:
             basic = base64.b64encode(f"{pub}:{sec}".encode()).decode()
-            merged["OTEL_EXPORTER_OTLP_HEADERS"] = (
-                f"Authorization=Basic%20{basic}"
-            )
+            merged["OTEL_EXPORTER_OTLP_HEADERS"] = f"Authorization=Basic%20{basic}"
 
     return merged
 
@@ -234,8 +235,7 @@ def main() -> None:
     # Safety floor
     if len(merged) < MIN_KEYS_FLOOR:
         fail(
-            f"merged set has only {len(merged)} keys "
-            f"(< floor {MIN_KEYS_FLOOR}); refusing to PATCH"
+            f"merged set has only {len(merged)} keys (< floor {MIN_KEYS_FLOOR}); refusing to PATCH"
         )
 
     diff = diff_summary(nf_current, merged)
@@ -271,9 +271,7 @@ def main() -> None:
     # Ensure restrictions still link the right service+job. We DO NOT
     # widen restrictions here — adding more agents to motto-core-prd
     # belongs in a separate PR with explicit review.
-    expected_objs = sorted(
-        [(LINK_SVC, "service"), (LINK_JOB, "job")]
-    )
+    expected_objs = sorted([(LINK_SVC, "service"), (LINK_JOB, "job")])
     current_objs = sorted(
         [(o.get("id"), o.get("type")) for o in (nf_restrictions.get("nfObjects") or [])]
     )

@@ -32,11 +32,9 @@ def _move(
         prompt_for_claude_code="",
         priority=2,
         intent=(
-            "Cron run NN observed 3 transient failures; small retry tweak "
-            "unblocks the next cycle."
+            "Cron run NN observed 3 transient failures; small retry tweak unblocks the next cycle."
         ),
-        code_changes=code_changes
-        or [{"path": "src/retry.py", "content": "TIMEOUT = 10\n"}],
+        code_changes=code_changes or [{"path": "src/retry.py", "content": "TIMEOUT = 10\n"}],
     )
 
 
@@ -49,16 +47,14 @@ def _mock_repo_meta(mock: respx.MockRouter, *, default_branch: str = "main") -> 
         return_value=httpx.Response(200, json={"default_branch": default_branch})
     )
     mock.get(f"{GH}/repos/{REPO}/git/ref/heads/{default_branch}").mock(
-        return_value=httpx.Response(
-            200, json={"object": {"sha": "main-sha-1234567"}}
-        )
+        return_value=httpx.Response(200, json={"object": {"sha": "main-sha-1234567"}})
     )
 
 
 def _mock_branch_missing(mock: respx.MockRouter) -> None:
-    mock.get(
-        f"{GH}/repos/{REPO}/git/ref/heads/{DEFAULT_COMPOUND_BRANCH}"
-    ).mock(return_value=httpx.Response(404, json={"message": "Not Found"}))
+    mock.get(f"{GH}/repos/{REPO}/git/ref/heads/{DEFAULT_COMPOUND_BRANCH}").mock(
+        return_value=httpx.Response(404, json={"message": "Not Found"})
+    )
     mock.post(f"{GH}/repos/{REPO}/git/refs").mock(
         return_value=httpx.Response(
             201,
@@ -79,9 +75,7 @@ def _mock_pr_open(
         "html_url": f"https://github.com/{REPO}/pull/{pr_number}",
         "body": body,
     }
-    mock.get(f"{GH}/repos/{REPO}/pulls").mock(
-        return_value=httpx.Response(200, json=[pr])
-    )
+    mock.get(f"{GH}/repos/{REPO}/pulls").mock(return_value=httpx.Response(200, json=[pr]))
     return pr
 
 
@@ -146,9 +140,7 @@ def test_compound_append_twice_accumulates_entries(monkeypatch):
         assert entries_after_tick1[0].title == "Tighten retry"
 
         # Tick 2: branch now exists, PR body carries the prior entry.
-        mock.get(
-            f"{GH}/repos/{REPO}/git/ref/heads/{DEFAULT_COMPOUND_BRANCH}"
-        ).mock(
+        mock.get(f"{GH}/repos/{REPO}/git/ref/heads/{DEFAULT_COMPOUND_BRANCH}").mock(
             return_value=httpx.Response(200, json={"object": {"sha": "branch-head"}})
         )
 
@@ -187,9 +179,9 @@ def test_compound_max_moves_flushes_via_auto_merge(monkeypatch, capsys):
 
     with respx.mock(assert_all_called=False) as mock:
         _mock_repo_meta(mock)
-        mock.get(
-            f"{GH}/repos/{REPO}/git/ref/heads/{DEFAULT_COMPOUND_BRANCH}"
-        ).mock(return_value=httpx.Response(200, json={"object": {"sha": "x"}}))
+        mock.get(f"{GH}/repos/{REPO}/git/ref/heads/{DEFAULT_COMPOUND_BRANCH}").mock(
+            return_value=httpx.Response(200, json={"object": {"sha": "x"}})
+        )
         _mock_pr_open(mock, body=seeded_body)
         _mock_contents_create_then_update(mock, "src/retry.py")
         _mock_pr_patch(mock)
@@ -205,9 +197,7 @@ def test_compound_max_moves_flushes_via_auto_merge(monkeypatch, capsys):
     assert results[0].status == "executed"
     assert graphql_route.call_count == 1
     log_events = [
-        json.loads(ln)
-        for ln in capsys.readouterr().out.splitlines()
-        if ln.strip().startswith("{")
+        json.loads(ln) for ln in capsys.readouterr().out.splitlines() if ln.strip().startswith("{")
     ]
     flushed = [e for e in log_events if e["event"] == "director.compound_flushed"]
     assert flushed and "max_moves_reached" in flushed[0]["reason"]
@@ -221,9 +211,7 @@ def test_compound_auto_merge_gate_respects_dry_run(monkeypatch):
     monkeypatch.setenv("DIRECTOR_AUTO_MERGE", "true")
 
     with respx.mock(assert_all_called=False) as mock:
-        gh_route = mock.route(host="api.github.com").mock(
-            return_value=httpx.Response(500)
-        )
+        gh_route = mock.route(host="api.github.com").mock(return_value=httpx.Response(500))
         results = act([_move()], _empty_snapshot())
 
     assert results[0].status == "dry_run"
@@ -246,9 +234,7 @@ def test_self_mod_paths_are_blocked_without_opt_in(monkeypatch):
     )
 
     with respx.mock(assert_all_called=False) as mock:
-        gh_route = mock.route(host="api.github.com").mock(
-            return_value=httpx.Response(500)
-        )
+        gh_route = mock.route(host="api.github.com").mock(return_value=httpx.Response(500))
         results = act([move], _empty_snapshot())
 
     assert results[0].status == "skipped"

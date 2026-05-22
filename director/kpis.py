@@ -150,7 +150,5 @@ def format_for_prompt(kpis: str, *, product: str = "MOTTO") -> str:
     label = product.upper().strip() or "MOTTO"
     return (
         f"===== {label} KPIs (current vs target — every epic must close one of "
-        "these gaps) =====\n"
-        + kpis.rstrip()
-        + "\n===== END KPIs =====\n\n"
+        "these gaps) =====\n" + kpis.rstrip() + "\n===== END KPIs =====\n\n"
     )

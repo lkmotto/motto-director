@@ -148,9 +148,7 @@ def test_apply_creates_when_no_existing_jobs(
     assert all(v == "created" for v in results.values())
 
 
-def test_apply_updates_when_jobs_exist(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_apply_updates_when_jobs_exist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NORTHFLANK_API_KEY", "test-token")
     monkeypatch.delenv("DRY_RUN", raising=False)
     existing = [{"name": "director-perceive"}, {"name": "director-meta"}]
@@ -163,9 +161,7 @@ def test_apply_updates_when_jobs_exist(
     assert all(v == "updated" for v in results.values())
 
 
-def test_apply_mixed_create_update(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_apply_mixed_create_update(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NORTHFLANK_API_KEY", "test-token")
     monkeypatch.delenv("DRY_RUN", raising=False)
     existing = [{"name": "director-perceive"}]  # meta missing
@@ -179,9 +175,7 @@ def test_apply_mixed_create_update(
     assert results["director-meta"] == "created"
 
 
-def test_apply_dry_run_makes_no_real_calls(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_apply_dry_run_makes_no_real_calls(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NORTHFLANK_API_KEY", raising=False)
     monkeypatch.delenv("NORTHFLANK_API_TOKEN", raising=False)
     monkeypatch.setenv("DRY_RUN", "1")
