@@ -110,8 +110,7 @@ def _report(fixes: list[SuggestedFix]) -> QualityReport:
     return QualityReport(
         top_problems=[f.title for f in fixes][:3],
         suggested_fixes=fixes,
-        confidence_score=(sum(f.confidence for f in fixes) / len(fixes))
-        if fixes else 0.0,
+        confidence_score=(sum(f.confidence for f in fixes) / len(fixes)) if fixes else 0.0,
         signals={},
     )
 
@@ -127,9 +126,7 @@ def test_generate_dry_run_cheap_fix_returns_pr_url():
 
 
 def test_generate_dry_run_expensive_fix_becomes_issue():
-    rep = _report([
-        _make_fix(cheapness="expensive", fix_kind="flag_for_review", confidence=0.95)
-    ])
+    rep = _report([_make_fix(cheapness="expensive", fix_kind="flag_for_review", confidence=0.95)])
     out = generate(rep, dry_run=True)
     assert out.pr_urls == []
     assert len(out.issue_urls) == 1
@@ -138,10 +135,12 @@ def test_generate_dry_run_expensive_fix_becomes_issue():
 
 def test_generate_below_threshold_is_skipped(monkeypatch):
     monkeypatch.setenv("QUALITY_FLYWHEEL_CONFIDENCE_THRESHOLD", "0.7")
-    rep = _report([
-        _make_fix(cheapness="cheap", confidence=0.5, target="t1"),
-        _make_fix(cheapness="cheap", confidence=0.8, target="t2"),
-    ])
+    rep = _report(
+        [
+            _make_fix(cheapness="cheap", confidence=0.5, target="t1"),
+            _make_fix(cheapness="cheap", confidence=0.8, target="t2"),
+        ]
+    )
     out = generate(rep, dry_run=True)
     assert len(out.pr_urls) == 1  # only the 0.8 one
     assert any(s.get("reason") == "below_confidence_threshold" for s in out.skipped)
@@ -176,11 +175,14 @@ def test_generate_when_gh_unconfigured_marks_all_skipped(monkeypatch):
     """No DRY_RUN, no gh CLI on PATH — every accepted fix appears in
     skipped with reason gh_not_configured."""
     monkeypatch.setattr(pr_generator, "is_configured", lambda: False)
-    rep = _report([
-        _make_fix(cheapness="cheap", confidence=0.9, target="t1"),
-        _make_fix(cheapness="expensive", fix_kind="flag_for_review",
-                  confidence=0.9, target="t2"),
-    ])
+    rep = _report(
+        [
+            _make_fix(cheapness="cheap", confidence=0.9, target="t1"),
+            _make_fix(
+                cheapness="expensive", fix_kind="flag_for_review", confidence=0.9, target="t2"
+            ),
+        ]
+    )
     out = generate(rep, dry_run=False)
     assert out.pr_urls == []
     assert out.issue_urls == []
@@ -200,10 +202,12 @@ def test_generate_handles_per_fix_exception_in_real_path(monkeypatch):
         return f"https://github.com/x/y/pull/{calls['n']}"
 
     monkeypatch.setattr(pr_generator, "_open_pr", fake_open_pr)
-    rep = _report([
-        _make_fix(cheapness="cheap", confidence=0.9, target="t1"),
-        _make_fix(cheapness="cheap", confidence=0.9, target="t2"),
-    ])
+    rep = _report(
+        [
+            _make_fix(cheapness="cheap", confidence=0.9, target="t1"),
+            _make_fix(cheapness="cheap", confidence=0.9, target="t2"),
+        ]
+    )
     out = generate(rep, dry_run=False)
     assert len(out.pr_urls) == 1
     assert any("boom" in s.get("reason", "") for s in out.skipped)

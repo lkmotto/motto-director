@@ -48,9 +48,7 @@ NORTHFLANK_API = "https://api.northflank.com/v1"
 
 def northflank_api_key() -> str:
     """Same precedence as director.perceive.northflank_api_key()."""
-    return os.environ.get("NORTHFLANK_API_KEY") or os.environ.get(
-        "NORTHFLANK_API_TOKEN", ""
-    )
+    return os.environ.get("NORTHFLANK_API_KEY") or os.environ.get("NORTHFLANK_API_TOKEN", "")
 
 
 @dataclass(frozen=True)
@@ -141,9 +139,7 @@ class NorthflankClient:
         data = r.json().get("data") or {}
         return list(data.get("jobs") or [])
 
-    def create_cron(
-        self, project: str, image: str, spec: CronSpec
-    ) -> dict[str, Any]:
+    def create_cron(self, project: str, image: str, spec: CronSpec) -> dict[str, Any]:
         body = self._cron_body(image, spec)
         if self._dry:
             logger.info("DRY_RUN create %s/%s body=%s", project, spec.name, body)
@@ -156,9 +152,7 @@ class NorthflankClient:
         r.raise_for_status()
         return r.json().get("data") or {}
 
-    def update_cron(
-        self, project: str, image: str, spec: CronSpec
-    ) -> dict[str, Any]:
+    def update_cron(self, project: str, image: str, spec: CronSpec) -> dict[str, Any]:
         body = self._cron_body(image, spec)
         if self._dry:
             logger.info("DRY_RUN update %s/%s body=%s", project, spec.name, body)
@@ -213,9 +207,7 @@ def apply(manifest_path: Path) -> dict[str, str]:
     dry_run = os.environ.get("DRY_RUN") == "1"
 
     if not token and not dry_run:
-        logger.warning(
-            "NORTHFLANK_API_KEY not set; skipping apply (returning 'skipped' for all)."
-        )
+        logger.warning("NORTHFLANK_API_KEY not set; skipping apply (returning 'skipped' for all).")
         return {s.name: "skipped" for s in specs}
 
     client = NorthflankClient(token=token or "DRY", dry_run=dry_run)
@@ -240,9 +232,7 @@ def apply(manifest_path: Path) -> dict[str, str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
-    )
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "manifest",

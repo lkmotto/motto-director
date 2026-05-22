@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 # Mode detection
 # ---------------------------------------------------------------------------
 
+
 def manual_mode_enabled() -> bool:
     """True when DIRECTOR_APPROVAL_MODE=manual.
 
@@ -53,10 +54,7 @@ def manual_mode_enabled() -> bool:
 
 
 def _dsn() -> str | None:
-    return (
-        os.environ.get("NEON_DATABASE_URL")
-        or os.environ.get("DATABASE_URL")
-    )
+    return os.environ.get("NEON_DATABASE_URL") or os.environ.get("DATABASE_URL")
 
 
 def is_configured() -> bool:
@@ -66,6 +64,7 @@ def is_configured() -> bool:
 # ---------------------------------------------------------------------------
 # Enqueue (called from act.py when manual_mode_enabled())
 # ---------------------------------------------------------------------------
+
 
 def enqueue_moves(
     moves: list[NextMove],
@@ -82,16 +81,14 @@ def enqueue_moves(
     """
     counts = {"queued": 0, "deduped": 0, "errors": 0}
     if not is_configured():
-        logger.warning("queue.enqueue_moves: no DSN configured; dropping %d moves",
-                       len(moves))
+        logger.warning("queue.enqueue_moves: no DSN configured; dropping %d moves", len(moves))
         counts["errors"] = len(moves)
         return counts
     try:
         import psycopg
         from psycopg import errors as pgerrors
     except ImportError:
-        logger.warning("queue.enqueue_moves: psycopg not installed; dropping %d moves",
-                       len(moves))
+        logger.warning("queue.enqueue_moves: psycopg not installed; dropping %d moves", len(moves))
         counts["errors"] = len(moves)
         return counts
 
@@ -129,7 +126,9 @@ def enqueue_moves(
                     counts["errors"] += 1
                     logger.warning(
                         "queue.enqueue_moves row failed (%s/%s): %s",
-                        m.repo, m.kind, exc,
+                        m.repo,
+                        m.kind,
+                        exc,
                     )
     return counts
 
@@ -137,6 +136,7 @@ def enqueue_moves(
 # ---------------------------------------------------------------------------
 # Read helpers (called from cockpit + telegram bot)
 # ---------------------------------------------------------------------------
+
 
 def list_pending(limit: int = 50) -> list[dict[str, Any]]:
     """Return up to ``limit`` pending rows newest-first."""
@@ -182,6 +182,7 @@ def _list_by_status(status: str, limit: int) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Approve / reject (called from cockpit + telegram)
 # ---------------------------------------------------------------------------
+
 
 def approve(move_id: int, *, approved_by: str) -> bool:
     """Mark a pending row approved. Returns True if a row was updated."""
@@ -252,10 +253,7 @@ def _transition(
         sets.append("apply_detail = %s")
         args.append(apply_detail)
     args.extend([int(move_id), from_status])
-    sql = (
-        f"UPDATE pending_moves SET {', '.join(sets)} "
-        "WHERE id = %s AND status = %s"
-    )
+    sql = f"UPDATE pending_moves SET {', '.join(sets)} WHERE id = %s AND status = %s"
     with psycopg.connect(dsn, connect_timeout=10) as conn:
         with conn.cursor() as cur:
             cur.execute(sql, args)
@@ -267,6 +265,7 @@ def _transition(
 # ---------------------------------------------------------------------------
 # Bulk approve (cockpit "approve all" button)
 # ---------------------------------------------------------------------------
+
 
 def bulk_approve(move_ids: list[int], *, approved_by: str) -> int:
     """Approve many pending rows in one transaction. Returns count updated."""
@@ -294,6 +293,7 @@ def bulk_approve(move_ids: list[int], *, approved_by: str) -> int:
 # GC (called by a periodic job, or every Nth tick)
 # ---------------------------------------------------------------------------
 
+
 def expire_stale(older_than_hours: int = 48) -> int:
     """Mark pending rows older than the threshold as 'expired'."""
     if not is_configured():
@@ -319,6 +319,7 @@ def expire_stale(older_than_hours: int = 48) -> int:
 # ---------------------------------------------------------------------------
 # Reconstruction for the apply job
 # ---------------------------------------------------------------------------
+
 
 def row_to_move(row: dict[str, Any]) -> NextMove:
     """Reconstruct a NextMove from a pending_moves row."""

@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "factory": {
+      "name": "Factory Droid Swarm",
+      "url": "https://factory-perplexity-mcp.ljm32901.workers.dev/mcp",
+      "headers": {
+        "Authorization": "Bearer ${exec:doppler secrets get HORIZON_API_KEY --plain --project motto-core --config prd}"
+      },
+      "timeout": 60
+    },
+    "motto-fleet": {
+      "name": "Motto Fleet Ledger",
+      "url": "https://ona-mcp-proxy.ljm32901.workers.dev/mcp",
+      "headers": {
+        "Authorization": "Bearer ${exec:doppler secrets get MOTTO_MCP_AUTH_TOKEN --plain --project motto-core --config prd}"
+      },
+      "timeout": 30
+    }
+  },
+  "globalTimeout": 60
+}

@@ -60,6 +60,7 @@ def _loud(event_name: str, **fields: Any) -> None:
         except Exception:
             pass
 
+
 _AGENT_NAME: str | None = None
 _KIND: str = "variable"
 _TRACER: Any = None
@@ -79,9 +80,7 @@ def _otel_enabled() -> bool:
 
 
 def _mcp_enabled() -> bool:
-    return bool(os.environ.get("MOTTO_MCP_URL")) and bool(
-        os.environ.get("MOTTO_MCP_AUTH_TOKEN")
-    )
+    return bool(os.environ.get("MOTTO_MCP_URL")) and bool(os.environ.get("MOTTO_MCP_AUTH_TOKEN"))
 
 
 def init_observability(agent_name: str, kind: str = "variable") -> None:
@@ -150,6 +149,7 @@ def init_fastapi(app: Any) -> None:
         return
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
         FastAPIInstrumentor.instrument_app(app)
     except Exception as e:
         logger.warning("FastAPI instrumentation failed: %s", e)
@@ -198,9 +198,7 @@ async def heartbeat(status: dict[str, Any] | None = None) -> None:
         return
     try:
         async with _mcp_client() as c:
-            await c.call_tool(
-                "heartbeat", {"agent_name": _AGENT_NAME, "status": status or {}}
-            )
+            await c.call_tool("heartbeat", {"agent_name": _AGENT_NAME, "status": status or {}})
     except Exception as e:
         _loud(
             "observability.heartbeat.failed",
@@ -298,12 +296,14 @@ async def track_run(kind: str, intent: str | None = None):
         if handle._token is not None:
             try:
                 from opentelemetry import context as otel_context
+
                 otel_context.detach(handle._token)
             except Exception:
                 pass
         if handle.span is not None:
             try:
                 from opentelemetry.trace import Status, StatusCode
+
                 handle.span.set_status(
                     Status(StatusCode.OK if status == "success" else StatusCode.ERROR)
                 )
@@ -360,6 +360,7 @@ def _extract_run_id(resp: Any) -> str | None:
     if content:
         try:
             import json as _json
+
             text = getattr(content[0], "text", None)
             if text:
                 parsed = _json.loads(text)
