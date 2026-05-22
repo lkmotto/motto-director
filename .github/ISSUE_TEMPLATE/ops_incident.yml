@@ -1,0 +1,21 @@
+name: Ops incident
+description: Production incident or outage
+title: "[Incident]: "
+labels: ["incident", "ops"]
+body:
+  - type: input
+    id: started
+    attributes:
+      label: When did it start?
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+    validations:
+      required: true
+  - type: textarea
+    id: timeline
+    attributes:
+      label: Timeline

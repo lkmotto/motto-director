@@ -63,9 +63,7 @@ def parse_watch_repos(raw: str | None) -> tuple[str, ...]:
 REPOS: tuple[str, ...] = parse_watch_repos(os.environ.get("WATCH_REPOS"))
 
 NORTHFLANK_PROJECT = os.environ.get("NORTHFLANK_PROJECT", "motto")
-PIPELINE_AUTO_NUDGE_JOB = os.environ.get(
-    "PIPELINE_AUTO_NUDGE_JOB", "pipeline-auto-nudge"
-)
+PIPELINE_AUTO_NUDGE_JOB = os.environ.get("PIPELINE_AUTO_NUDGE_JOB", "pipeline-auto-nudge")
 
 
 @dataclass
@@ -175,9 +173,7 @@ def _fetch_pr_ci_status(client: httpx.Client, repo: str, sha: str) -> str:
     return "pending"
 
 
-def _fetch_pr_reviews(
-    client: httpx.Client, repo: str, number: int
-) -> tuple[str, int]:
+def _fetch_pr_reviews(client: httpx.Client, repo: str, number: int) -> tuple[str, int]:
     r = client.get(
         f"{GITHUB_API}/repos/{repo}/pulls/{number}/reviews",
         headers=_gh_headers(),
@@ -251,9 +247,7 @@ def _fetch_repo_issues(client: httpx.Client, repo: str) -> list[Issue]:
     return out
 
 
-def _fetch_default_branch_head(
-    client: httpx.Client, repo: str
-) -> tuple[str, float | None] | None:
+def _fetch_default_branch_head(client: httpx.Client, repo: str) -> tuple[str, float | None] | None:
     """Probe the repo. Returns (default_branch, head_age_hours) on success,
     or None if the repo is missing/unreachable — a single bad repo must not
     abort the whole snapshot."""
@@ -268,10 +262,7 @@ def _fetch_default_branch_head(
         if rb.status_code != 200:
             return default_branch, None
         commit = rb.json().get("commit", {}).get("commit", {})
-        iso = (
-            commit.get("committer", {}).get("date")
-            or commit.get("author", {}).get("date")
-        )
+        iso = commit.get("committer", {}).get("date") or commit.get("author", {}).get("date")
         return default_branch, _age_hours(iso) if iso else None
     except httpx.HTTPStatusError as exc:
         _log(
@@ -291,9 +282,7 @@ def _fetch_default_branch_head(
         return None
 
 
-def _fetch_northflank_job(
-    client: httpx.Client, project: str, job: str
-) -> NorthflankJobStatus:
+def _fetch_northflank_job(client: httpx.Client, project: str, job: str) -> NorthflankJobStatus:
     # Skip gracefully when the Northflank credential isn't provisioned.
     # An empty Bearer header crashes httpx with LocalProtocolError, which
     # would abort an entire director cycle. Logging + null status keeps
@@ -353,9 +342,7 @@ def perceive(repos: tuple[str, ...] | None = None) -> Snapshot:
                     head_age_hours=head_age,
                 )
             )
-        pipeline_status = _fetch_northflank_job(
-            client, NORTHFLANK_PROJECT, PIPELINE_AUTO_NUDGE_JOB
-        )
+        pipeline_status = _fetch_northflank_job(client, NORTHFLANK_PROJECT, PIPELINE_AUTO_NUDGE_JOB)
 
     return Snapshot(
         captured_at=captured_at,

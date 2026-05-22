@@ -100,9 +100,7 @@ async def _run_async() -> int:
         try:
             from director.digest import send_telegram
 
-            text = _format_digest(
-                report_dict, gen.pr_urls, gen.issue_urls, len(gen.skipped)
-            )
+            text = _format_digest(report_dict, gen.pr_urls, gen.issue_urls, len(gen.skipped))
             await asyncio.to_thread(send_telegram, text)
         except Exception as exc:  # noqa: BLE001
             logger.debug("telegram digest skipped: %s", exc)

@@ -53,9 +53,7 @@ MAX_LOC_PER_SESSION = 200
 # Manual-mode ceiling: human is the gate, so we let bigger compound moves
 # through. Override via DIRECTOR_MAX_FILES_MANUAL env if you want a different
 # scope cap for human-reviewed proposals.
-MAX_FILES_PER_SESSION_MANUAL = int(
-    os.environ.get("DIRECTOR_MAX_FILES_MANUAL", "12")
-)
+MAX_FILES_PER_SESSION_MANUAL = int(os.environ.get("DIRECTOR_MAX_FILES_MANUAL", "12"))
 
 CI_BOT_AUTHOR = "github-actions[bot]"
 
@@ -120,8 +118,12 @@ def is_eligible_for_spawn(target: Issue | PullRequest) -> tuple[bool, str]:
 
 
 def is_eligible_for_auto_merge(
-    pr: PullRequest, ci_state: str, *, changed_paths: list[str] | None = None,
-    changed_loc: int | None = None, author: str | None = None,
+    pr: PullRequest,
+    ci_state: str,
+    *,
+    changed_paths: list[str] | None = None,
+    changed_loc: int | None = None,
+    author: str | None = None,
 ) -> tuple[bool, str]:
     """Auto-merge gate. See module docstring for the full rule set."""
     if ci_state != "success":
@@ -272,7 +274,6 @@ def _evaluate(
         if size > cap:
             return False, f"prompt scope estimate {size} > {cap}"
         return True, "ok"
-
 
     if move.kind == "merge_pr":
         pr = _find_pr(snapshot, move.repo, move.title)

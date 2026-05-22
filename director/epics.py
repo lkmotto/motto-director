@@ -44,10 +44,7 @@ logger = logging.getLogger(__name__)
 
 
 def _dsn() -> str | None:
-    return (
-        os.environ.get("NEON_DATABASE_URL")
-        or os.environ.get("DATABASE_URL")
-    )
+    return os.environ.get("NEON_DATABASE_URL") or os.environ.get("DATABASE_URL")
 
 
 def is_configured() -> bool:
@@ -63,7 +60,7 @@ def is_configured() -> bool:
 class EpicStep:
     order: int
     title: str
-    kind: str                       # spawn_session | file_issue | compound_pr | ...
+    kind: str  # spawn_session | file_issue | compound_pr | ...
     repo: str
     rationale: str = ""
     depends_on: list[int] = field(default_factory=list)
@@ -72,6 +69,7 @@ class EpicStep:
 @dataclass
 class Epic:
     """In-memory representation of an epic, including its plan steps."""
+
     title: str
     kpi_ref: str
     rationale: str
@@ -170,9 +168,17 @@ def list_active_epics() -> list[Epic]:
             )
             for row in cur.fetchall():
                 (
-                    id_, run_id, title, kpi_ref, rationale,
-                    est_cycles, criteria, plan, status,
-                    created, updated,
+                    id_,
+                    run_id,
+                    title,
+                    kpi_ref,
+                    rationale,
+                    est_cycles,
+                    criteria,
+                    plan,
+                    status,
+                    created,
+                    updated,
                 ) = row
                 plan_dict = plan if isinstance(plan, dict) else json.loads(plan)
                 steps = [
@@ -219,8 +225,7 @@ def count_open_kpis() -> set[str]:
     with psycopg.connect(dsn, connect_timeout=10) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT DISTINCT kpi_ref FROM epics "
-                "WHERE status IN ('proposed','active','paused')"
+                "SELECT DISTINCT kpi_ref FROM epics WHERE status IN ('proposed','active','paused')"
             )
             return {r[0] for r in cur.fetchall()}
 

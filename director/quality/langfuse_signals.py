@@ -19,9 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 def is_configured() -> bool:
-    return bool(
-        os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY")
-    )
+    return bool(os.environ.get("LANGFUSE_PUBLIC_KEY") and os.environ.get("LANGFUSE_SECRET_KEY"))
 
 
 async def collect(since_days: int = 7) -> dict[str, Any]:
@@ -103,11 +101,7 @@ def _error_rate(traces: list[dict[str, Any]]) -> dict[str, float]:
 
 def _cost_per_decision(traces: list[dict[str, Any]]) -> float:
     """Mean total-cost per trace in USD. 0.0 when no cost fields present."""
-    costs = [
-        float(t.get("totalCost") or 0)
-        for t in traces
-        if t.get("totalCost") is not None
-    ]
+    costs = [float(t.get("totalCost") or 0) for t in traces if t.get("totalCost") is not None]
     return sum(costs) / len(costs) if costs else 0.0
 
 
@@ -121,8 +115,7 @@ def _error_sequences(traces: list[dict[str, Any]]) -> list[list[str]]:
             continue
         last = obs_list[-1]
         ended_error = (
-            last.get("level") == "ERROR"
-            or "error" in (last.get("statusMessage") or "").lower()
+            last.get("level") == "ERROR" or "error" in (last.get("statusMessage") or "").lower()
         )
         if not ended_error:
             continue
@@ -143,6 +136,7 @@ def _duration_ms(obs: dict[str, Any]) -> float | None:
         return None
     try:
         from datetime import datetime
+
         s = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
         e = datetime.fromisoformat(str(end).replace("Z", "+00:00"))
         return (e - s).total_seconds() * 1000.0

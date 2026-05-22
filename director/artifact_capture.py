@@ -32,9 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 def _mcp_configured() -> bool:
-    return bool(os.environ.get("MOTTO_MCP_URL")) and bool(
-        os.environ.get("MOTTO_MCP_AUTH_TOKEN")
-    )
+    return bool(os.environ.get("MOTTO_MCP_URL")) and bool(os.environ.get("MOTTO_MCP_AUTH_TOKEN"))
 
 
 async def record_artifact_content(
@@ -65,6 +63,7 @@ async def record_artifact_content(
     try:
         from fastmcp import Client
         from fastmcp.client.auth import BearerAuth
+
         url = os.environ["MOTTO_MCP_URL"]
         token = os.environ["MOTTO_MCP_AUTH_TOKEN"]
         async with Client(url, auth=BearerAuth(token)) as c:
@@ -115,6 +114,7 @@ async def get_review_status(artifact_id: int) -> str | None:
     try:
         from fastmcp import Client
         from fastmcp.client.auth import BearerAuth
+
         url = os.environ["MOTTO_MCP_URL"]
         token = os.environ["MOTTO_MCP_AUTH_TOKEN"]
         # No dedicated MCP read-by-id tool yet; reuse pending-review

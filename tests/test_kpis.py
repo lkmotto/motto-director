@@ -100,6 +100,7 @@ def test_motto_kpi_file_uses_heading_format():
     will silently drop epics targeting that KPI."""
     import re
     from pathlib import Path
+
     text = (Path(__file__).resolve().parent.parent / "motto-kpis.md").read_text()
     assert not re.search(r"^#### KPI:", text, re.M), (
         "motto-kpis.md uses 4-hash KPI headings; planner only matches 3-hash"
@@ -112,6 +113,7 @@ def test_motto_kpi_file_uses_heading_format():
 def test_downtime_kpi_file_uses_heading_format():
     import re
     from pathlib import Path
+
     text = (Path(__file__).resolve().parent.parent / "downtime-kpis.md").read_text()
     assert not re.search(r"^#### KPI:", text, re.M)
     titles = re.findall(r"^### KPI: (.+)$", text, re.M)
@@ -124,6 +126,7 @@ def test_kpi_files_dont_overlap_titles():
     `kpi_ref` lookup becomes ambiguous."""
     import re
     from pathlib import Path
+
     root = Path(__file__).resolve().parent.parent
     motto = (root / "motto-kpis.md").read_text()
     dt = (root / "downtime-kpis.md").read_text()
