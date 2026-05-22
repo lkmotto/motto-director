@@ -42,6 +42,7 @@ observability = [
 [project.scripts]
 motto-director = "director.main:run"
 motto-director-digest = "director.digest:run_digest"
+motto-director-worker = "director.worker:run"
 motto-director-meta = "director.meta:run_meta"
 motto-director-quality = "director.quality_cron:run_quality"
 
