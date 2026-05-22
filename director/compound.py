@@ -100,9 +100,7 @@ def _get_default_branch_head_sha(client: httpx.Client, repo: str) -> str:
 def ensure_branch(client: httpx.Client, repo: str, branch: str) -> str:
     """Return the branch's head SHA; create it from default-branch HEAD if
     missing."""
-    r = client.get(
-        f"{GITHUB_API}/repos/{repo}/git/ref/heads/{branch}", headers=_gh_headers()
-    )
+    r = client.get(f"{GITHUB_API}/repos/{repo}/git/ref/heads/{branch}", headers=_gh_headers())
     if r.status_code == 200:
         return r.json()["object"]["sha"]
     if r.status_code != 404:
@@ -152,9 +150,7 @@ def append_commit(
     return last_sha
 
 
-def find_compound_pr(
-    client: httpx.Client, repo: str, branch: str
-) -> dict | None:
+def find_compound_pr(client: httpx.Client, repo: str, branch: str) -> dict | None:
     r = client.get(
         f"{GITHUB_API}/repos/{repo}/pulls",
         params={"state": "open", "head": f"{repo.split('/')[0]}:{branch}"},
@@ -252,9 +248,7 @@ def update_pr_body(
     r.raise_for_status()
 
 
-def enable_auto_merge(
-    client: httpx.Client, pr_node_id: str, *, method: str = "SQUASH"
-) -> None:
+def enable_auto_merge(client: httpx.Client, pr_node_id: str, *, method: str = "SQUASH") -> None:
     """Enable native GH auto-merge via GraphQL. The repo must allow auto-merge."""
     query = (
         "mutation($id: ID!, $method: PullRequestMergeMethod!) {"

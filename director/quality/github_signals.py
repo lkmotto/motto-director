@@ -43,9 +43,7 @@ def is_configured() -> bool:
     if not shutil.which("gh"):
         return False
     return bool(
-        os.environ.get("GITHUB_TOKEN")
-        or os.environ.get("GH_TOKEN")
-        or os.environ.get("GITHUB_PAT")
+        os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_PAT")
     )
 
 
@@ -185,10 +183,7 @@ def _repo_snapshot(repo: str, since_days: int) -> dict[str, Any] | None:
     auto_merge_ok_count = sum(
         1
         for p in recent
-        if any(
-            lab.get("name") == "auto-merge-ok"
-            for lab in p.get("labels") or []
-        )
+        if any(lab.get("name") == "auto-merge-ok" for lab in p.get("labels") or [])
     )
     reverts = _detect_reverts(prs)
     ci_flake_score = _ci_flake_score(repo, recent)

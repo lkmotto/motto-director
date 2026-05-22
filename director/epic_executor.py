@@ -76,10 +76,9 @@ def _step_to_move(epic: Epic, step) -> NextMove:
         f"Epic #{epic.id} '{epic.title}' (KPI: {epic.kpi_ref}) — "
         f"step {step.order} of {len(epic.steps)}: {step.rationale}"
     ).strip()[:1000]
-    intent = (
-        f"Multi-cycle epic targeting KPI '{epic.kpi_ref}'. "
-        f"Step {step.order}: {step.title}"
-    )[:500]
+    intent = (f"Multi-cycle epic targeting KPI '{epic.kpi_ref}'. Step {step.order}: {step.title}")[
+        :500
+    ]
     prompt = ""
     if step.kind == "spawn_session":
         prompt = (

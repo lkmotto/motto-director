@@ -109,18 +109,22 @@ def test_coerce_verdict_pass_leaves_severity_none():
 
 def test_coerce_verdict_clips_long_issues():
     long_issue = "x" * 500
-    _, _, issues, _ = _coerce_verdict({
-        "verdict": "block",
-        "issues": [long_issue],
-    })
+    _, _, issues, _ = _coerce_verdict(
+        {
+            "verdict": "block",
+            "issues": [long_issue],
+        }
+    )
     assert len(issues[0]) == 200
 
 
 def test_coerce_verdict_caps_issue_count():
-    _, _, issues, _ = _coerce_verdict({
-        "verdict": "flag",
-        "issues": [f"i{n}" for n in range(50)],
-    })
+    _, _, issues, _ = _coerce_verdict(
+        {
+            "verdict": "flag",
+            "issues": [f"i{n}" for n in range(50)],
+        }
+    )
     assert len(issues) == 20
 
 
@@ -232,6 +236,7 @@ def test_no_repo_drops_move():
 def _async_return(value):
     async def _f(*args, **kwargs):
         return value
+
     return _f
 
 
@@ -257,18 +262,20 @@ def test_critique_artifacts_vision_capability_gap(monkeypatch):
     monkeypatch the network-touching boundaries.
     """
     monkeypatch.setenv("DEEPSEEK_API_KEY", "x")
-    pending = [{
-        "id": 1,
-        "agent_name": "motto-video-agent",
-        "kind": "thumbnail",
-        "name": "ep-7-thumb",
-        "content": {
-            "body": "(image bytes elided)",
-            "intent": "thumbnail for episode 7",
-            "repo": "lkmotto/motto-video-agent",
-            "send_blocking": False,
-        },
-    }]
+    pending = [
+        {
+            "id": 1,
+            "agent_name": "motto-video-agent",
+            "kind": "thumbnail",
+            "name": "ep-7-thumb",
+            "content": {
+                "body": "(image bytes elided)",
+                "intent": "thumbnail for episode 7",
+                "repo": "lkmotto/motto-video-agent",
+                "send_blocking": False,
+            },
+        }
+    ]
     monkeypatch.setattr(critic, "_fetch_pending", _async_return(pending))
     monkeypatch.setattr(critic, "_mark_reviewed", _async_return(True))
 
@@ -277,9 +284,8 @@ def test_critique_artifacts_vision_capability_gap(monkeypatch):
     import httpx
 
     async def _no_post(self, *args, **kwargs):  # pragma: no cover
-        raise AssertionError(
-            "DeepSeek HTTP must not be called for vision-required kinds"
-        )
+        raise AssertionError("DeepSeek HTTP must not be called for vision-required kinds")
+
     monkeypatch.setattr(httpx.AsyncClient, "post", _no_post)
 
     moves = asyncio.run(critic.critique_artifacts())
@@ -291,17 +297,19 @@ def test_critique_artifacts_vision_capability_gap(monkeypatch):
 
 def test_critique_artifacts_pass_emits_no_move(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "x")
-    pending = [{
-        "id": 99,
-        "agent_name": "motto-sdr-agent",
-        "kind": "cold_email",
-        "content": {
-            "body": "Hi! Quick question about your pipeline.",
-            "intent": "lender outreach",
-            "repo": "lkmotto/motto-sdr-agent",
-            "send_blocking": True,
-        },
-    }]
+    pending = [
+        {
+            "id": 99,
+            "agent_name": "motto-sdr-agent",
+            "kind": "cold_email",
+            "content": {
+                "body": "Hi! Quick question about your pipeline.",
+                "intent": "lender outreach",
+                "repo": "lkmotto/motto-sdr-agent",
+                "send_blocking": True,
+            },
+        }
+    ]
     monkeypatch.setattr(critic, "_fetch_pending", _async_return(pending))
     monkeypatch.setattr(critic, "_mark_reviewed", _async_return(True))
 
@@ -322,6 +330,7 @@ def test_critique_artifacts_pass_emits_no_move(monkeypatch):
             tokens_out=5,
             latency_ms=100,
         )
+
     monkeypatch.setattr(critic, "_critique_one", _stub)
 
     moves = asyncio.run(critic.critique_artifacts())
@@ -330,17 +339,19 @@ def test_critique_artifacts_pass_emits_no_move(monkeypatch):
 
 def test_critique_artifacts_block_emits_high_priority_move(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "x")
-    pending = [{
-        "id": 7,
-        "agent_name": "motto-appraisal-pipeline",
-        "kind": "amc_reply_draft",
-        "content": {
-            "body": "Sure, signing now.",
-            "intent": "reply to AMC inquiry",
-            "repo": "lkmotto/motto-appraisal-pipeline",
-            "send_blocking": True,
-        },
-    }]
+    pending = [
+        {
+            "id": 7,
+            "agent_name": "motto-appraisal-pipeline",
+            "kind": "amc_reply_draft",
+            "content": {
+                "body": "Sure, signing now.",
+                "intent": "reply to AMC inquiry",
+                "repo": "lkmotto/motto-appraisal-pipeline",
+                "send_blocking": True,
+            },
+        }
+    ]
     monkeypatch.setattr(critic, "_fetch_pending", _async_return(pending))
     monkeypatch.setattr(critic, "_mark_reviewed", _async_return(True))
 
@@ -360,6 +371,7 @@ def test_critique_artifacts_block_emits_high_priority_move(monkeypatch):
             tokens_out=15,
             latency_ms=300,
         )
+
     monkeypatch.setattr(critic, "_critique_one", _stub)
 
     moves = asyncio.run(critic.critique_artifacts())

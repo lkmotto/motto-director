@@ -81,6 +81,7 @@ async def _async_main() -> int:
         except Exception:  # noqa: BLE001
             pass
         from director.perceive import Snapshot  # local import to avoid cycle
+
         snapshot = Snapshot(captured_at=datetime.now(UTC).isoformat(), repos=[])
     moves = []
     id_for_move: dict[int, int] = {}
@@ -121,8 +122,14 @@ async def _async_main() -> int:
             queue.mark_failed(row_id, detail=f"{r.status}: {r.detail}")
             failed += 1
 
-    _log("apply.done", applied=applied, failed=failed, skipped=skipped,
-         total=len(results), moves=[asdict(m) for m in moves])
+    _log(
+        "apply.done",
+        applied=applied,
+        failed=failed,
+        skipped=skipped,
+        total=len(results),
+        moves=[asdict(m) for m in moves],
+    )
     try:
         await event(
             "apply.done",
