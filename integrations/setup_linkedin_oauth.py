@@ -26,7 +26,6 @@ import sys
 import threading
 import urllib.parse
 import webbrowser
-from typing import Optional
 
 import httpx
 
@@ -46,8 +45,8 @@ DOPPLER_CONFIG = "prd"
 # Local callback server
 # ---------------------------------------------------------------------------
 
-_auth_code: Optional[str] = None
-_server_error: Optional[str] = None
+_auth_code: str | None = None
+_server_error: str | None = None
 
 
 class _CallbackHandler(http.server.BaseHTTPRequestHandler):
@@ -88,14 +87,20 @@ def _start_callback_server(port: int = 8080) -> http.server.HTTPServer:
 # Doppler helpers
 # ---------------------------------------------------------------------------
 
+
 def _doppler_set(key: str, value: str) -> bool:
     """Store a secret in Doppler. Returns True on success."""
     try:
         result = subprocess.run(
             [
-                "doppler", "secrets", "set", f"{key}={value}",
-                "--project", DOPPLER_PROJECT,
-                "--config", DOPPLER_CONFIG,
+                "doppler",
+                "secrets",
+                "set",
+                f"{key}={value}",
+                "--project",
+                DOPPLER_PROJECT,
+                "--config",
+                DOPPLER_CONFIG,
                 "--silent",
             ],
             capture_output=True,
@@ -123,16 +128,18 @@ def _doppler_available() -> bool:
 # Main flow
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     print("\n=== LinkedIn OAuth 2.0 Setup ===\n")
 
     # 1. Get client credentials
-    client_id = os.environ.get("LINKEDIN_CLIENT_ID") or input(
-        "LinkedIn Client ID (from developer.linkedin.com): "
-    ).strip()
-    client_secret = os.environ.get("LINKEDIN_CLIENT_SECRET") or input(
-        "LinkedIn Client Secret: "
-    ).strip()
+    client_id = (
+        os.environ.get("LINKEDIN_CLIENT_ID")
+        or input("LinkedIn Client ID (from developer.linkedin.com): ").strip()
+    )
+    client_secret = (
+        os.environ.get("LINKEDIN_CLIENT_SECRET") or input("LinkedIn Client Secret: ").strip()
+    )
 
     if not client_id or not client_secret:
         print("ERROR: Client ID and Client Secret are required.")
@@ -161,13 +168,14 @@ def main() -> None:
         sys.exit(1)
 
     # 4. Open browser
-    print(f"\nOpening browser for LinkedIn authorization...")
+    print("\nOpening browser for LinkedIn authorization...")
     print(f"If the browser does not open, visit this URL manually:\n\n  {auth_url}\n")
     webbrowser.open(auth_url)
 
     # 5. Wait for callback
     print("Waiting for authorization callback (timeout: 120s)...")
     import time
+
     for _ in range(120):
         if _auth_code or _server_error:
             break
@@ -244,10 +252,16 @@ def main() -> None:
     # Always print the commands for reference (mask sensitive values)
     print("\nDoppler commands to store secrets manually:")
     for key in secrets_to_store:
-        print(f"  doppler secrets set {key}=<value> --project {DOPPLER_PROJECT} --config {DOPPLER_CONFIG}")
+        print(
+            f"  doppler secrets set {key}=<value> "
+            f"--project {DOPPLER_PROJECT} --config {DOPPLER_CONFIG}"
+        )
 
     print("\nSetup complete. Run the MCP server with:")
-    print(f"  doppler run --project {DOPPLER_PROJECT} --config {DOPPLER_CONFIG} -- python integrations/linkedin_mcp_server.py\n")
+    print(
+        f"  doppler run --project {DOPPLER_PROJECT} --config {DOPPLER_CONFIG} "
+        f"-- python integrations/linkedin_mcp_server.py\n"
+    )
 
 
 if __name__ == "__main__":
