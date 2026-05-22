@@ -557,7 +557,15 @@ def _propose_epic(move: NextMove) -> ActResult:
             detail="propose_epic: missing code_changes payload",
         )
     payload_change = move.code_changes[0]
-    payload_raw = getattr(payload_change, "content", "") or ""
+    # code_changes items are dicts (see NextMove.code_changes typing in
+    # ideate.py: list[dict[str, str]]). Earlier this read via getattr,
+    # which silently returned "" for every dict and made propose_epic
+    # a no-op in prod. Support both dict and object shapes defensively
+    # so future refactors to a CodeChange dataclass don't re-break it.
+    if isinstance(payload_change, dict):
+        payload_raw = payload_change.get("content", "") or ""
+    else:
+        payload_raw = getattr(payload_change, "content", "") or ""
     if not payload_raw:
         return ActResult(
             move=move,
