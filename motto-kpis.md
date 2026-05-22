@@ -39,6 +39,14 @@ land in exactly one repo.
 - **leading indicator**: panels accepted × historical orders/panel/month
 - **why it matters**: the only metric that directly maps to revenue.
 
+### KPI: Discovery meetings booked per week
+- **target**: ≥ 3 net-new discovery / intro calls booked from outbound (sustained, by 2026-07-01)
+- **current**: not measured (sdr-agent emits sends + replies but no booked-meeting signal yet)
+- **contributing repos**: motto-sdr-agent (cold email + Apollo sequences + Bland voice), motto-outreach (follow-ups), motto-mcp-server (cal.com booking webhook)
+- **leading indicator**: positive replies / week × historical booking rate (~40% of positive replies)
+- **why it matters**: meetings are the lead indicator for AMC panel registrations and new orders; this is the Apollo demand-gen north-star.
+- **owning epic candidate**: `apollo-demand-gen` (Phase 4 of fleet centralization)
+
 ### KPI: Daily fleet LLM spend
 - **target**: ≤ $5 / day blended across all agents
 - **current**: ~$0.05–$0.15 / director cycle × 48 cycles/day plus SDR + social
@@ -125,6 +133,14 @@ land in exactly one repo.
 - **target**: ≤ 30 minutes
 - **current**: not measured
 - **why it matters**: time-to-first-comp is the user-perceptible speed of the service.
+
+### KPI: Median appraisal report turn time (intake → client delivery)
+- **target**: ≤ 3 business days end-to-end (sustained, by 2026-09-01)
+- **current**: not measured (need stage-level timestamps in the pipeline)
+- **contributing repos**: motto-appraisal-pipeline (every stage), comp-hunter (comp selection), motto-mcp-server (timer instrumentation), motto-appraisal-cockpit (human-gate latency)
+- **leading indicator**: median dwell time at slowest gate; appraiser-pending queue depth
+- **why it matters**: shorter turn times = more orders fit in the same calendar = revenue ceiling rises without hiring. This is the Phase-4 "appraisal-turn-time" target.
+- **owning epic candidate**: `appraisal-turn-time` (Phase 4 of fleet centralization)
 
 ### KPI: Pipeline tick failure rate
 - **target**: ≤ 2% of `/tick` calls error
