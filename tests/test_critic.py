@@ -382,3 +382,99 @@ def test_critique_artifacts_block_emits_high_priority_move(monkeypatch):
     assert "BLOCK" in m.title
     assert "AMC doctrine" in m.rationale
     assert "human review" in m.rationale
+
+
+def test_detect_repeat_offenders_weighted_threshold():
+    from director.critic import _detect_repeat_offenders
+
+    def _r(repo, kind, verdict, aid):
+        return CritiqueResult(
+            artifact_id=aid,
+            agent_name="agent",
+            kind=kind,
+            verdict=verdict,
+            severity=None if verdict == "pass" else "low",
+            issues=[],
+            suggested_fix="",
+            repo=repo,
+            intent="",
+            send_blocking=False,
+            tokens_in=0,
+            tokens_out=0,
+            latency_ms=0,
+        )
+
+    results = [
+        _r("lkmotto/motto-sdr-agent", "cold_email", "block", 1),
+        _r("lkmotto/motto-sdr-agent", "cold_email", "flag", 2),
+        _r("lkmotto/motto-sdr-agent", "follow_up", "flag", 3),
+        _r("lkmotto/motto-sdr-agent", "follow_up", "flag", 4),
+        _r("lkmotto/motto-video-agent", "thumbnail", "block", 5),
+        _r("lkmotto/motto-video-agent", "thumbnail", "block", 6),
+        _r("lkmotto/motto-sdr-agent", "cold_email", "pass", 7),
+    ]
+
+    offenders = _detect_repeat_offenders(results)
+    summary = {(repo, kind, w) for (repo, kind, w, _g) in offenders}
+    assert summary == {
+        ("lkmotto/motto-sdr-agent", "cold_email", 3),
+        ("lkmotto/motto-video-agent", "thumbnail", 4),
+    }
+    assert len(offenders) == 2
+    # Sorted by weighted count descending.
+    assert offenders[0][2] >= offenders[1][2]
+
+
+def test_build_self_heal_epic_move_payload_shape():
+    import json as _json
+
+    from director.critic import _build_self_heal_epic_move
+
+    repo = "lkmotto/motto-sdr-agent"
+    kind = "cold_email"
+    group = [
+        CritiqueResult(
+            artifact_id=i,
+            agent_name="motto-sdr-agent",
+            kind=kind,
+            verdict="block" if i == 1 else "flag",
+            severity="high",
+            issues=[f"issue-{i}"],
+            suggested_fix="fix it",
+            repo=repo,
+            intent="cold outreach",
+            send_blocking=True,
+            tokens_in=0,
+            tokens_out=0,
+            latency_ms=0,
+        )
+        for i in range(1, 4)
+    ]
+    weighted = 2 + 1 + 1  # one block + two flag
+
+    move = _build_self_heal_epic_move(repo, kind, weighted, group)
+    assert move is not None
+    assert move.kind == "propose_epic"
+    assert len(move.code_changes) == 1
+    assert move.code_changes[0]["path"] == "__epic__"
+
+    payload = _json.loads(move.code_changes[0]["content"])
+    expected_keys = {
+        "epic_title",
+        "kpi_ref",
+        "rationale",
+        "estimated_cycles",
+        "success_criteria",
+        "steps",
+    }
+    assert expected_keys.issubset(payload.keys())
+    assert payload["kpi_ref"].startswith("output_critic_pass_rate:")
+
+    steps = payload["steps"]
+    assert len(steps) == 3
+    assert [s["kind"] for s in steps] == [
+        "factory_droid",
+        "factory_droid",
+        "verify_move",
+    ]
+    assert move.priority == 2
