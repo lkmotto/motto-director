@@ -133,8 +133,7 @@ def _collect_sync(dsn: str, since_days: int) -> dict[str, Any]:
                     (since_days,),
                 )
                 out["repeated_failures"] = [
-                    {"pattern": r[0] or "?", "count": int(r[1])}
-                    for r in cur.fetchall()
+                    {"pattern": r[0] or "?", "count": int(r[1])} for r in cur.fetchall()
                 ]
             except Exception as e:  # noqa: BLE001
                 logger.debug("repeated_failures query skipped: %s", e)
@@ -157,11 +156,7 @@ async def persist_quality_report(report_dict: dict[str, Any]) -> int | None:
             with conn.cursor() as cur:
                 # Accept both `top_problems` (synthesizer.as_dict) and the
                 # legacy `top_3_problems` shape. Either is fine.
-                top = (
-                    report_dict.get("top_problems")
-                    or report_dict.get("top_3_problems")
-                    or []
-                )
+                top = report_dict.get("top_problems") or report_dict.get("top_3_problems") or []
                 cur.execute(
                     """
                     INSERT INTO quality_reports

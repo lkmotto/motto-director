@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 async def _mcp_client():
     from fastmcp import Client
     from fastmcp.client.auth import BearerAuth
+
     url = os.environ["MOTTO_MCP_URL"]
     token = os.environ["MOTTO_MCP_AUTH_TOKEN"]
     async with Client(url, auth=BearerAuth(token)) as c:
@@ -33,9 +34,7 @@ async def _mcp_client():
 
 
 def _mcp_enabled() -> bool:
-    return bool(os.environ.get("MOTTO_MCP_URL")) and bool(
-        os.environ.get("MOTTO_MCP_AUTH_TOKEN")
-    )
+    return bool(os.environ.get("MOTTO_MCP_URL")) and bool(os.environ.get("MOTTO_MCP_AUTH_TOKEN"))
 
 
 async def fleet_status() -> list[dict[str, Any]]:
@@ -236,6 +235,7 @@ async def last_planner_was_truncated(
     if isinstance(payload, str):
         try:
             import json as _json
+
             payload = _json.loads(payload)
         except (ValueError, TypeError):
             return False

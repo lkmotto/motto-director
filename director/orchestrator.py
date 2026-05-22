@@ -58,17 +58,11 @@ from director.kpis import load_kpis
 from director.perceive import Snapshot
 from director.strategy import format_for_prompt, load_strategic_intent
 
-DEEPSEEK_BASE_URL = os.environ.get(
-    "DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1"
-)
-DEEPSEEK_DEFAULT_MODEL = os.environ.get(
-    "DEEPSEEK_MODEL", "deepseek-v4-flash"
-)
+DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+DEEPSEEK_DEFAULT_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash")
 # Reasoner has a 32K output cap (vs 8K on chat) — used as auto-promote
 # fallback when the previous planner cycle hit finish_reason='length'.
-PLANNER_HIGH_CAP_MODEL = os.environ.get(
-    "PLANNER_HIGH_CAP_MODEL", "deepseek-reasoner"
-)
+PLANNER_HIGH_CAP_MODEL = os.environ.get("PLANNER_HIGH_CAP_MODEL", "deepseek-reasoner")
 DEEPSEEK_TIMEOUT_S = float(os.environ.get("DEEPSEEK_TIMEOUT_S", "120"))
 
 
@@ -134,8 +128,8 @@ Propose:
 
 Ignore: feature work, doc PRs, issue triage. That's other lenses.
 
-""" + _BASE_RULES,
-
+"""
+    + _BASE_RULES,
     "stale_pr_closer": """You are the stale-PR closer for the motto stack.
 
 Lens: open PRs that have been sitting too long.
@@ -153,8 +147,8 @@ Propose:
 
 Ignore: brand-new PRs (<24h), CI failures (CI doctor lens), feature ideation.
 
-""" + _BASE_RULES,
-
+"""
+    + _BASE_RULES,
     "issue_triager": """You are the issue triager for the motto stack.
 
 Lens: open GitHub issues.
@@ -173,8 +167,8 @@ Propose:
 
 Ignore: PR queue, CI failures, code review.
 
-""" + _BASE_RULES,
-
+"""
+    + _BASE_RULES,
     "cross_repo": """You are the cross-repo coupling watcher for the motto stack.
 
 Lens: changes in one repo that imply required follow-up in another.
@@ -193,8 +187,8 @@ Propose:
 
 Ignore: single-repo work, CI, issue triage, cost.
 
-""" + _BASE_RULES,
-
+"""
+    + _BASE_RULES,
     "cost_watchdog": """You are the cost / performance watchdog for the motto stack.
 
 Lens: anomalies in cost or latency.
@@ -212,10 +206,12 @@ Propose:
 
 Ignore: PR queue, CI, issue triage, cross-repo.
 
-""" + _BASE_RULES,
+"""
+    + _BASE_RULES,
 }
 
-LENS_PROMPTS["architect"] = """You are the fleet architect for the motto stack.
+LENS_PROMPTS["architect"] = (
+    """You are the fleet architect for the motto stack.
 
 Lens: structural upgrades — the kind of moves that make the system *better*,
 not just unbroken. Read the STRATEGIC INTENT block carefully; every move you
@@ -247,10 +243,13 @@ Other lenses cover those.
 Bias: prefer one big high-leverage move over five small ones. Empty list
 is better than a small move padding the count.
 
-""" + _BASE_RULES
+"""
+    + _BASE_RULES
+)
 
 
-LENS_PROMPTS["opportunity_scout"] = """You are the opportunity scout for the motto stack.
+LENS_PROMPTS["opportunity_scout"] = (
+    """You are the opportunity scout for the motto stack.
 
 Lens: things that are *missing*, not things that are broken. The director's
 other lenses are janitorial — you find net-new value.
@@ -278,7 +277,9 @@ Ignore: existing issues being worked on, PRs in flight, CI noise.
 Bias: name what's missing in plain language. Don't propose if you can't
 cite a concrete reason it matters this cycle.
 
-""" + _BASE_RULES
+"""
+    + _BASE_RULES
+)
 
 
 LENS_PROMPTS["planner"] = """You are the multi-cycle planner for the motto stack.
@@ -355,7 +356,8 @@ Hard rules:
    the whole cycle is wasted. Be precise, not verbose.
 """
 
-LENS_PROMPTS["epic_bundler"] = """You are the epic bundler for the motto stack.
+LENS_PROMPTS["epic_bundler"] = (
+    """You are the epic bundler for the motto stack.
 
 This lens runs AFTER the other lenses. You receive their merged proposals
 in the user message under `=== UPSTREAM PROPOSALS ===`. Your job is to spot
@@ -381,7 +383,9 @@ When you bundle, the bundled session should explicitly reference the
 upstream move titles in its `intent` field so the human approver knows
 which smaller moves the bundle replaces.
 
-""" + _BASE_RULES
+"""
+    + _BASE_RULES
+)
 
 
 DEFAULT_LENSES: tuple[str, ...] = (
@@ -495,9 +499,7 @@ async def _call_subagent(
         resp.raise_for_status()
         data = resp.json()
     except Exception as exc:  # noqa: BLE001
-        latency = int(
-            (datetime.now(UTC) - started).total_seconds() * 1000
-        )
+        latency = int((datetime.now(UTC) - started).total_seconds() * 1000)
         _log(
             "orchestrator.subagent.error",
             lens=lens,
@@ -505,16 +507,16 @@ async def _call_subagent(
             latency_ms=latency,
         )
         return SubagentResult(
-            lens=lens, moves=[], tokens_in=0, tokens_out=0,
-            latency_ms=latency, error=str(exc)[:200],
+            lens=lens,
+            moves=[],
+            tokens_in=0,
+            tokens_out=0,
+            latency_ms=latency,
+            error=str(exc)[:200],
         )
 
     latency = int((datetime.now(UTC) - started).total_seconds() * 1000)
-    text = (
-        data.get("choices", [{}])[0]
-        .get("message", {})
-        .get("content", "")
-    )
+    text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
     usage = data.get("usage", {}) or {}
     parsed = _extract_json(text)
     raw_moves = parsed.get("moves", []) if isinstance(parsed, dict) else []
@@ -545,9 +547,7 @@ async def _call_subagent(
     )
 
 
-def _merge_moves(
-    results: list[SubagentResult], *, max_total: int = 20
-) -> list[NextMove]:
+def _merge_moves(results: list[SubagentResult], *, max_total: int = 20) -> list[NextMove]:
     """Merge subagent outputs.
 
     Dedupe by (repo, kind, title.lower()). When duplicates exist, keep the
@@ -564,19 +564,14 @@ def _merge_moves(
             if key in by_key:
                 existing, agree_count = by_key[key]
                 # agreement bump: lower priority number = higher urgency
-                new_priority = max(
-                    1, min(existing.priority, m.priority) - 1
-                )
+                new_priority = max(1, min(existing.priority, m.priority) - 1)
                 merged = NextMove(
                     repo=existing.repo,
                     kind=existing.kind,
                     title=existing.title,
-                    rationale=(
-                        existing.rationale + " | " + m.rationale
-                    )[:1000],
+                    rationale=(existing.rationale + " | " + m.rationale)[:1000],
                     prompt_for_claude_code=(
-                        existing.prompt_for_claude_code
-                        or m.prompt_for_claude_code
+                        existing.prompt_for_claude_code or m.prompt_for_claude_code
                     ),
                     priority=new_priority,
                     intent=(existing.intent + " | " + m.intent)[:500],
@@ -634,8 +629,7 @@ def _parse_planner_epics(text: str, *, run_id: str) -> list[Epic]:
                 EpicStep(
                     order=order,
                     title=str(s.get("title", "")).strip(),
-                    kind=str(s.get("kind", "spawn_session")).strip()
-                    or "spawn_session",
+                    kind=str(s.get("kind", "spawn_session")).strip() or "spawn_session",
                     repo=str(s.get("repo", "")).strip(),
                     rationale=str(s.get("rationale", "")).strip(),
                     depends_on=depends,
@@ -688,6 +682,7 @@ async def _run_planner(
     promoted = False
     try:
         from director import fleet as fleet_mod
+
         if await fleet_mod.last_planner_was_truncated():
             chosen_model = PLANNER_HIGH_CAP_MODEL
             promoted = True
@@ -701,8 +696,7 @@ async def _run_planner(
 
     open_kpis = sorted(count_open_kpis())
     open_kpis_text = (
-        "\n".join(f"- {k}" for k in open_kpis) if open_kpis
-        else "(none yet — propose freely)"
+        "\n".join(f"- {k}" for k in open_kpis) if open_kpis else "(none yet — propose freely)"
     )
     user_msg = _user_message(
         snapshot,
@@ -759,9 +753,15 @@ async def _run_planner(
     # Skip epics whose KPI already has an open epic.
     open_set = set(open_kpis)
     fresh = [e for e in candidates if e.kpi_ref not in open_set]
-    counts = insert_epics(fresh, run_id=run_id) if fresh else {
-        "inserted": 0, "skipped": 0, "errors": 0,
-    }
+    counts = (
+        insert_epics(fresh, run_id=run_id)
+        if fresh
+        else {
+            "inserted": 0,
+            "skipped": 0,
+            "errors": 0,
+        }
+    )
     counts.update(
         {
             "parsed": len(candidates),
@@ -779,6 +779,7 @@ async def _run_planner(
     # planner from SQL (NF API doesn't expose run logs).
     try:
         from director import fleet as fleet_mod
+
         await fleet_mod.record_planner_event(
             run_id=run_id or None,
             parsed=int(counts.get("parsed", 0)),
@@ -827,9 +828,8 @@ async def parallel_ideate(
     deep_read_level = ""
     try:
         from director import deep_read
-        deep_read_level = (
-            os.environ.get("DIRECTOR_DEEP_READ_LEVEL", "").strip().lower()
-        )
+
+        deep_read_level = os.environ.get("DIRECTOR_DEEP_READ_LEVEL", "").strip().lower()
         repo_evidence = deep_read.gather_evidence(snapshot) if deep_read.is_enabled() else ""
     except Exception as exc:  # noqa: BLE001
         _log("deep_read.failed", error=str(exc)[:300])
@@ -844,13 +844,18 @@ async def parallel_ideate(
     sem = asyncio.Semaphore(max_concurrency)
 
     async with httpx.AsyncClient() as client:
+
         async def _run(lens: str) -> SubagentResult:
             async with sem:
                 system = LENS_PROMPTS.get(lens, "")
                 if not system:
                     return SubagentResult(
-                        lens=lens, moves=[], tokens_in=0, tokens_out=0,
-                        latency_ms=0, error="unknown lens",
+                        lens=lens,
+                        moves=[],
+                        tokens_in=0,
+                        tokens_out=0,
+                        latency_ms=0,
+                        error="unknown lens",
                     )
                 return await _call_subagent(
                     client,
@@ -867,9 +872,7 @@ async def parallel_ideate(
         merged_upstream = _merge_moves(results)
         bundler_moves: list[NextMove] = []
         if merged_upstream and "epic_bundler" in LENS_PROMPTS:
-            upstream_text = json.dumps(
-                [asdict(m) for m in merged_upstream], indent=2, default=str
-            )
+            upstream_text = json.dumps([asdict(m) for m in merged_upstream], indent=2, default=str)
             bundler_user_msg = _user_message(
                 snapshot,
                 strategic_intent=strategic_intent,
@@ -942,7 +945,9 @@ async def parallel_ideate(
         synth_result = SubagentResult(
             lens="epic_executor",
             moves=epic_moves,
-            tokens_in=0, tokens_out=0, latency_ms=0,
+            tokens_in=0,
+            tokens_out=0,
+            latency_ms=0,
         )
         merged = _merge_moves(results + [synth_result])
         _log(
@@ -956,6 +961,9 @@ async def parallel_ideate(
 
 def is_enabled() -> bool:
     """True when DIRECTOR_PARALLEL_SUBAGENTS env is set to a truthy value."""
-    return os.environ.get(
-        "DIRECTOR_PARALLEL_SUBAGENTS", ""
-    ).strip().lower() in ("1", "true", "yes", "on")
+    return os.environ.get("DIRECTOR_PARALLEL_SUBAGENTS", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )

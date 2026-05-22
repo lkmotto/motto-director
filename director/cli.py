@@ -25,13 +25,18 @@ them once the Neon state-passing path lands.
 
 from __future__ import annotations
 
+import pathlib as _pathlib
+import sys as _sys  # noqa: E402
+
+_sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent))
 import sys
+
+import sentry_init  # noqa: E402,F401
 
 
 def _print_usage() -> int:
     print(
-        "usage: python -m director.cli "
-        "<cycle|perceive|ideate|act|digest|meta>",
+        "usage: python -m director.cli <cycle|perceive|ideate|act|digest|meta>",
         file=sys.stderr,
     )
     return 2
@@ -59,4 +64,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    import sentry_sdk as _sentry_sdk
+
+    try:
+        sys.exit(main())
+    except Exception as _exc:
+        _sentry_sdk.capture_exception(_exc)
+        raise
