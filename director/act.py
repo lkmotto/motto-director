@@ -30,6 +30,7 @@ from director.compound import (
     parse_pr_entries,
     update_pr_body,
 )
+from director.epics import Epic, EpicStep, insert_epics
 from director.ideate import NextMove
 from director.perceive import Issue, PullRequest, Snapshot, northflank_api_key
 
@@ -536,6 +537,145 @@ def _verify_move(move: NextMove) -> ActResult:
     )
 
 
+def _propose_epic(move: NextMove) -> ActResult:
+    """Insert a self-heal Epic proposed by the output critic.
+
+    The move carries the epic payload as a JSON blob in
+    ``move.code_changes[0].content`` (path == ``"__epic__"``). We parse it,
+    construct ``Epic``/``EpicStep`` objects, and insert at status='proposed'
+    so it shows up in the cockpit approval queue. We deliberately do NOT
+    auto-activate the epic — Luke approves Epics explicitly.
+
+    Doctrine: Director nudges, never silently spawns work. propose_epic is
+    a nudge in epic form — created by the critic when an artifact kind
+    fails ``_SELF_HEAL_FAILURE_THRESHOLD`` times in one tick.
+    """
+    if not move.code_changes:
+        return ActResult(
+            move=move,
+            status="error",
+            detail="propose_epic: missing code_changes payload",
+        )
+    payload_change = move.code_changes[0]
+    payload_raw = getattr(payload_change, "content", "") or ""
+    if not payload_raw:
+        return ActResult(
+            move=move,
+            status="error",
+            detail="propose_epic: empty epic payload",
+        )
+    try:
+        payload = json.loads(payload_raw)
+    except (TypeError, ValueError) as exc:
+        return ActResult(
+            move=move,
+            status="error",
+            detail=f"propose_epic: bad JSON payload: {exc}"[:200],
+        )
+    if not isinstance(payload, dict):
+        return ActResult(
+            move=move,
+            status="error",
+            detail="propose_epic: payload not an object",
+        )
+
+    steps_raw = payload.get("steps") or []
+    steps: list[EpicStep] = []
+    for s in steps_raw:
+        if not isinstance(s, dict):
+            continue
+        try:
+            steps.append(
+                EpicStep(
+                    order=int(s.get("order", len(steps) + 1)),
+                    title=str(s.get("title", ""))[:200],
+                    kind=str(s.get("kind", "factory_droid"))[:64],
+                    repo=str(s.get("repo", move.repo))[:120],
+                    rationale=str(s.get("rationale", ""))[:1000],
+                    depends_on=list(s.get("depends_on", []) or []),
+                )
+            )
+        except (TypeError, ValueError):
+            continue
+    if not steps:
+        return ActResult(
+            move=move,
+            status="error",
+            detail="propose_epic: no valid steps in payload",
+        )
+
+    try:
+        epic = Epic(
+            title=str(payload.get("epic_title", move.title))[:200],
+            kpi_ref=str(payload.get("kpi_ref", ""))[:200],
+            rationale=str(payload.get("rationale", move.intent))[:1000],
+            estimated_cycles=int(payload.get("estimated_cycles", 3)),
+            success_criteria=str(payload.get("success_criteria", ""))[:1000],
+            steps=steps,
+        )
+    except (TypeError, ValueError) as exc:
+        return ActResult(
+            move=move,
+            status="error",
+            detail=f"propose_epic: bad Epic fields: {exc}"[:200],
+        )
+
+    fleet_run_id = fleet_run_id_var.get() or "director-cycle"
+    counts = insert_epics([epic], run_id=fleet_run_id)
+
+    _fire_and_forget(
+        fleet.record_decision(
+            run_id=fleet_run_id,
+            choice="proposed_self_heal_epic",
+            rationale=move.intent,
+            evidence={
+                "epic_title": epic.title,
+                "kpi_ref": epic.kpi_ref,
+                "steps": len(epic.steps),
+                "insert_counts": counts,
+            },
+        )
+    )
+    _fire_and_forget(
+        fleet.record_artifact(
+            run_id=fleet_run_id,
+            kind="propose_epic_inserted",
+            ref=epic.kpi_ref or epic.title[:64],
+            meta={
+                "epic_title": epic.title,
+                "kpi_ref": epic.kpi_ref,
+                "estimated_cycles": epic.estimated_cycles,
+                "steps": [
+                    {"order": s.order, "title": s.title, "kind": s.kind, "repo": s.repo}
+                    for s in epic.steps
+                ],
+                "insert_counts": counts,
+            },
+        )
+    )
+
+    if counts.get("inserted", 0) >= 1:
+        return ActResult(
+            move=move,
+            status="executed",
+            detail=(
+                f"epic proposed: '{epic.title[:80]}' "
+                f"steps={len(epic.steps)} kpi={epic.kpi_ref[:60]}"
+            ),
+        )
+    if counts.get("skipped", 0) >= 1:
+        return ActResult(
+            move=move,
+            status="skipped",
+            detail=f"epic already exists (unique violation): {epic.title[:120]}",
+        )
+    return ActResult(
+        move=move,
+        status="error",
+        detail=f"epic insert failed: counts={counts}",
+    )
+
+
 def _merge_pr(client: httpx.Client, move: NextMove, snapshot: Snapshot) -> ActResult:
     pr = _find_pr(snapshot, move.repo, move.title)
     if pr is None:
@@ -732,6 +872,8 @@ def act(
                     results.append(_compound_pr(client, move, run_id=run_id))
                 elif move.kind == "verify_move":
                     results.append(_verify_move(move))
+                elif move.kind == "propose_epic":
+                    results.append(_propose_epic(move))
             except httpx.HTTPError as exc:
                 results.append(ActResult(move=move, status="error", detail=str(exc)))
     return results

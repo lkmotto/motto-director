@@ -131,7 +131,7 @@ def test_ideate_parses_moves_and_keeps_only_those_with_intent():
             },
             {
                 "repo": "lkmotto/motto-appraisal-pipeline",
-                "kind": "spawn_session",
+                "kind": "factory_droid",
                 "title": "Investigate cockpit→pipeline outage",
                 "rationale": "P1 bug, 200h old.",
                 "prompt_for_claude_code": "Reproduce issue #99 and propose a fix.",
@@ -163,7 +163,7 @@ def test_ideate_parses_moves_and_keeps_only_those_with_intent():
     }
     client = _fake_anthropic(payload)
     moves = ideate(_snapshot(), client=client)
-    assert [m.kind for m in moves] == ["merge_pr", "spawn_session", "noop"]
+    assert [m.kind for m in moves] == ["merge_pr", "factory_droid", "noop"]
     assert moves[0].priority == 1
     assert moves[1].prompt_for_claude_code.startswith("Reproduce")
     assert all(m.intent for m in moves)
