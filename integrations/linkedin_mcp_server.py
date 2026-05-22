@@ -33,8 +33,7 @@ def _auth_headers() -> dict[str, str]:
     token = os.environ.get("LINKEDIN_ACCESS_TOKEN", "")
     if not token:
         raise RuntimeError(
-            "LINKEDIN_ACCESS_TOKEN is not set. "
-            "Run integrations/setup_linkedin_oauth.py first."
+            "LINKEDIN_ACCESS_TOKEN is not set. Run integrations/setup_linkedin_oauth.py first."
         )
     return {
         "Authorization": f"Bearer {token}",
@@ -96,10 +95,12 @@ async def search_candidates(
             me = client.get(f"{_BASE_URL}/me", headers=_auth_headers(), timeout=15)
             me.raise_for_status()
             profile = me.json()
+            first = profile.get("localizedFirstName", "")
+            last = profile.get("localizedLastName", "")
             return [
                 {
                     "urn": profile.get("id"),
-                    "name": f"{profile.get('localizedFirstName', '')} {profile.get('localizedLastName', '')}".strip(),
+                    "name": f"{first} {last}".strip(),
                     "headline": profile.get("localizedHeadline", ""),
                     "note": "Recruiter API required for full candidate search",
                 }
@@ -204,13 +205,16 @@ async def get_profile(
         )
         resp.raise_for_status()
         data = resp.json()
+        first = data.get("localizedFirstName", "")
+        last = data.get("localizedLastName", "")
+        vanity = data.get("vanityName", "")
         return {
             "urn": data.get("id"),
-            "name": f"{data.get('localizedFirstName', '')} {data.get('localizedLastName', '')}".strip(),
+            "name": f"{first} {last}".strip(),
             "headline": data.get("localizedHeadline", ""),
             "summary": data.get("localizedSummary", ""),
-            "vanity_name": data.get("vanityName", ""),
-            "profile_url": profile_url or f"https://www.linkedin.com/in/{data.get('vanityName', '')}",
+            "vanity_name": vanity,
+            "profile_url": profile_url or f"https://www.linkedin.com/in/{vanity}",
         }
 
 
@@ -234,13 +238,7 @@ async def send_inmail(
     """
     payload = {
         "recipients": {
-            "values": [
-                {
-                    "messagingMember": {
-                        "miniProfile": {"objectUrn": recipient_urn}
-                    }
-                }
-            ]
+            "values": [{"messagingMember": {"miniProfile": {"objectUrn": recipient_urn}}}]
         },
         "subject": subject,
         "body": body,
