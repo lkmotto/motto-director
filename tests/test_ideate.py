@@ -131,7 +131,7 @@ def test_ideate_parses_moves_and_keeps_only_those_with_intent():
             },
             {
                 "repo": "lkmotto/motto-appraisal-pipeline",
-                "kind": "spawn_session",
+                "kind": "factory_droid",
                 "title": "Investigate cockpit→pipeline outage",
                 "rationale": "P1 bug, 200h old.",
                 "prompt_for_claude_code": "Reproduce issue #99 and propose a fix.",
@@ -163,7 +163,7 @@ def test_ideate_parses_moves_and_keeps_only_those_with_intent():
     }
     client = _fake_anthropic(payload)
     moves = ideate(_snapshot(), client=client)
-    assert [m.kind for m in moves] == ["merge_pr", "spawn_session", "noop"]
+    assert [m.kind for m in moves] == ["merge_pr", "factory_droid", "noop"]
     assert moves[0].priority == 1
     assert moves[1].prompt_for_claude_code.startswith("Reproduce")
     assert all(m.intent for m in moves)
@@ -529,3 +529,42 @@ def test_call_claude_max_subprocess_timeout(monkeypatch):
         assert "timeout" in exc.reason.lower()
     else:
         raise AssertionError("expected _ProviderHTTPError")
+
+
+def test_ideate_drops_deprecated_spawn_session_kind(capsys):
+    payload = {
+        "moves": [
+            {
+                "repo": "lkmotto/motto-sdr-agent",
+                "kind": "spawn_session",
+                "title": "deprecated spawn",
+                "rationale": "should be dropped",
+                "prompt_for_claude_code": "Do the deprecated thing.",
+                "priority": 2,
+                "intent": (
+                    "Filing a deprecated spawn_session to confirm the deprecation filter drops it."
+                ),
+            },
+            {
+                "repo": "lkmotto/motto-sdr-agent",
+                "kind": "factory_droid",
+                "title": "Investigate cold_email regression",
+                "rationale": "valid",
+                "prompt_for_claude_code": "Reproduce the regression.",
+                "priority": 1,
+                "intent": (
+                    "factory_droid move should survive the deprecation "
+                    "filter and end up in the returned list."
+                ),
+            },
+        ]
+    }
+    client = _fake_anthropic(payload)
+    moves = ideate(_snapshot(), client=client)
+    assert [m.kind for m in moves] == ["factory_droid"]
+
+    events = _log_events(capsys.readouterr().out)
+    dropped = [e for e in events if e.get("event") == "move.dropped"]
+    assert len(dropped) == 1
+    assert dropped[0]["reason"] == "deprecated_proposal_kind"
+    assert dropped[0]["kind"] == "spawn_session"

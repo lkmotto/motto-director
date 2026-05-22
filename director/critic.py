@@ -462,6 +462,151 @@ async def _mark_reviewed(
         return False
 
 
+# Phase 3: critic → Epic self-heal loop.
+#
+# When the critic finds the SAME (repo, kind) failing repeatedly inside a
+# single tick, that's not a one-off content bug — it's a systemic drift
+# the producing agent can't fix with another rewrite. The right escalation
+# is to promote it to a multi-cycle remediation Epic that lives in
+# director/epics.py alongside the Phase-4 campaigns. The Epic is inserted
+# as status='proposed' so it still needs cockpit approval; this just lets
+# the director "see" recurring badness and "nudge" toward fixing the
+# producer agent, not just the symptom.
+#
+# Tunable threshold: 3 non-pass verdicts in the same tick on the same
+# (repo, kind). Lower would over-fire on noisy producers; higher would
+# under-fire on slow drift. The 'block' verdict counts double because
+# blocked output is much more expensive than flagged output.
+_SELF_HEAL_FAILURE_THRESHOLD = 3
+_BLOCK_WEIGHT = 2
+
+
+def _detect_repeat_offenders(
+    results: list[CritiqueResult],
+) -> list[tuple[str, str, int, list[CritiqueResult]]]:
+    """Group critique results by (repo, kind) and return groups whose
+    weighted failure count crosses _SELF_HEAL_FAILURE_THRESHOLD.
+
+    Returns a list of (repo, kind, weighted_count, group_results) tuples
+    sorted by weighted count descending so the worst offender is first.
+    """
+    groups: dict[tuple[str, str], list[CritiqueResult]] = {}
+    for r in results:
+        if r.verdict == "pass":
+            continue
+        if not r.repo or not r.kind:
+            continue
+        groups.setdefault((r.repo, r.kind), []).append(r)
+
+    offenders: list[tuple[str, str, int, list[CritiqueResult]]] = []
+    for (repo, kind), group in groups.items():
+        weighted = sum(_BLOCK_WEIGHT if g.verdict == "block" else 1 for g in group)
+        if weighted >= _SELF_HEAL_FAILURE_THRESHOLD:
+            offenders.append((repo, kind, weighted, group))
+    offenders.sort(key=lambda x: x[2], reverse=True)
+    return offenders
+
+
+def _build_self_heal_epic_move(
+    repo: str,
+    kind: str,
+    weighted_count: int,
+    group: list[CritiqueResult],
+) -> NextMove | None:
+    """Build a propose_epic NextMove for a (repo, kind) repeat-offender group.
+
+    The dispatcher in act.py reads `code_changes` for the epic payload
+    (title, kpi_ref, rationale, success_criteria, steps), mirroring how
+    compound_pr uses code_changes.
+    """
+    block_count = sum(1 for g in group if g.verdict == "block")
+    flag_count = sum(1 for g in group if g.verdict == "flag")
+    agents_involved = sorted({g.agent_name for g in group if g.agent_name})
+    issue_samples = []
+    for g in group[:3]:
+        for i in g.issues[:2]:
+            issue_samples.append(f"  - [{g.verdict}] {i}")
+    issues_block = "\n".join(issue_samples) or "  - (no issue samples)"
+
+    title = f"self-heal: recurring critic failures on {kind} in {repo}"[:240]
+    rationale = (
+        f"Output critic flagged {kind} artifacts from {repo} "
+        f"{len(group)} times this tick "
+        f"({flag_count} flag, {block_count} block, weighted={weighted_count}). "
+        f"Producing agents: {', '.join(agents_involved) or '(unknown)'}. "
+        f"This is a recurring producer-side drift, not a one-off content "
+        f"bug. Promoting to a self-heal Epic so the fix targets the agent "
+        f"itself, not just the symptoms.\n\n"
+        f"Recent issue samples:\n{issues_block}"
+    )[:2000]
+
+    epic_payload = {
+        "epic_title": title,
+        "kpi_ref": f"output_critic_pass_rate:{repo}:{kind}",
+        "rationale": rationale[:1000],
+        "estimated_cycles": 3,
+        "success_criteria": (
+            f"7-day rolling pass rate for {kind} artifacts from {repo} "
+            "returns to >=90% (was <50% in the trigger tick)."
+        ),
+        "steps": [
+            {
+                "order": 1,
+                "title": f"Audit {kind} producer prompt/template in {repo}",
+                "kind": "factory_droid",
+                "repo": repo,
+                "rationale": (
+                    f"Read the most recent {len(group)} flagged artifacts "
+                    f"from the fleet ledger, find the common failure mode, "
+                    f"and propose a prompt or template patch. Do NOT ship "
+                    f"the patch yet \u2014 just diagnose."
+                ),
+            },
+            {
+                "order": 2,
+                "title": f"Patch the producer for {kind}",
+                "kind": "factory_droid",
+                "repo": repo,
+                "rationale": (
+                    "Apply the diagnosis from step 1 as a PR. Reuse the "
+                    "existing test suite to confirm no regression."
+                ),
+                "depends_on": [1],
+            },
+            {
+                "order": 3,
+                "title": (f"Verify pass rate recovery for {kind} over 7-day rolling window"),
+                "kind": "verify_move",
+                "repo": "lkmotto/motto-director",
+                "rationale": (
+                    "Confirm the patch actually moved the pass-rate KPI. "
+                    "If not, the Epic stays open and the next planner "
+                    "cycle will propose a different remediation."
+                ),
+                "depends_on": [2],
+            },
+        ],
+    }
+
+    intent = (
+        f"output_critic detected {weighted_count} weighted failures on "
+        f"{kind} in {repo} this tick; escalating to a self-heal Epic."
+    )[:500]
+
+    return _coerce_move(
+        {
+            "repo": repo,
+            "kind": "propose_epic",
+            "title": title,
+            "rationale": rationale[:1000],
+            "prompt_for_claude_code": "",
+            "priority": 2,  # high but not blocking-urgent
+            "intent": intent,
+            "code_changes": [{"path": "__epic__", "content": json.dumps(epic_payload)}],
+        }
+    )
+
+
 def _verdict_to_status(verdict: str) -> str:
     return {
         "pass": "passed",
@@ -543,6 +688,25 @@ async def critique_artifacts(
         if m is not None:
             moves.append(m)
 
+    # Phase 3: detect repeat offenders and escalate to self-heal Epics.
+    # These moves are in ADDITION to the per-artifact file_critique_issue
+    # moves above — a repeat-offender group still files individual issues
+    # for traceability, plus one parent Epic that targets the producer.
+    epic_moves_emitted = 0
+    offenders = _detect_repeat_offenders(results)
+    for repo, kind, weighted_count, group in offenders:
+        epic_move = _build_self_heal_epic_move(repo, kind, weighted_count, group)
+        if epic_move is not None:
+            moves.append(epic_move)
+            epic_moves_emitted += 1
+            _log(
+                "critic.self_heal_proposed",
+                repo=repo,
+                kind=kind,
+                weighted_count=weighted_count,
+                group_size=len(group),
+            )
+
     pass_count = sum(1 for r in results if r.verdict == "pass")
     flag_count = sum(1 for r in results if r.verdict == "flag")
     block_count = sum(1 for r in results if r.verdict == "block")
@@ -555,6 +719,7 @@ async def critique_artifacts(
         blocked=block_count,
         errored=err_count,
         moves_emitted=len(moves),
+        self_heal_epics_proposed=epic_moves_emitted,
     )
     return moves
 

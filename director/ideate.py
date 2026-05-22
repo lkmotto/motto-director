@@ -50,6 +50,7 @@ MoveKind = Literal[
     "nudge_pipeline",
     "compound_pr",
     "file_critique_issue",
+    "propose_epic",
     "noop",
     "verify_move",
 ]
@@ -63,6 +64,7 @@ _VALID_KINDS: frozenset[str] = frozenset(
         "nudge_pipeline",
         "compound_pr",
         "file_critique_issue",
+        "propose_epic",
         "noop",
         "verify_move",
     )
@@ -130,24 +132,28 @@ Hard rules:
 1. Every move MUST include explicit `intent` (1-2 sentences explaining WHY now,
    referencing concrete signals from the snapshot — PR numbers, ages, statuses).
    Moves without intent are dropped.
-2. `kind` is one of: spawn_session, factory_droid, file_issue, merge_pr,
-   nudge_pipeline, compound_pr, noop, verify_move.
+2. `kind` is one of: factory_droid, file_issue, merge_pr, nudge_pipeline,
+   compound_pr, file_critique_issue, noop, verify_move.
+   - `factory_droid` is the ONLY way to spawn a coding agent. It dispatches
+     to a Factory.ai droid using one of the .factory/droids/*.md roles:
+     doppler-sync (secrets), northflank-ops (deploys/crons), github-ops
+     (PRs/issues/merges), ona-fleet-reporter (audits/fleet health), or
+     factory-orchestrator (multi-step meta work). The director routes to
+     the right droid by repo+intent keywords; you do not need to specify.
+   - `spawn_session` (Claude Code) is DEPRECATED. Do NOT propose it. The
+     Claude Code subscription was cancelled; the dispatcher remains only
+     for backwards-compat on old pending_moves rows. Any spawn_session
+     move you propose will be dropped.
    - `verify_move` triggers an outcome verification on a previously-applied
      move. Use this AFTER applying a move, when you want to confirm the
      move actually achieved its KPI intent. Set `target_move_id` in the
      code_changes/payload area to the pending_moves.id you want verified.
      Day 1 verifiers only support kind=noop and kind=merge_pr; other kinds
      return inconclusive until per-repo verifiers are wired.
-   - `factory_droid` spawns a Factory.ai droid session (parallel to
-     spawn_session for Claude Code). Prefer factory_droid when the work
-     maps cleanly to one of the .factory/droids/*.md roles: doppler-sync
-     (secrets), northflank-ops (deploys/crons), github-ops (PRs/issues/
-     merges), ona-fleet-reporter (audits/fleet health), or factory-
-     orchestrator (multi-step meta work). Reuses `prompt_for_claude_code`
-     as the prompt field. Never silently fall back from one to the other.
 3. `priority` is an integer 1-5 (1 = highest).
-4. `prompt_for_claude_code` is required for spawn_session AND factory_droid
-   moves; it must be a self-contained brief a fresh session can act on.
+4. `prompt_for_claude_code` is required for factory_droid moves; it must
+   be a self-contained brief a fresh droid session can act on. (Field
+   name kept for backwards-compat; it's the prompt regardless of kind.)
 5. For `compound_pr` moves, populate `code_changes` as a list of
    {path, content} objects with the full new file content. The director
    appends these as a single commit to a long-lived rolling PR per repo.
@@ -189,12 +195,27 @@ def _snapshot_to_prompt(snapshot: Snapshot) -> str:
     return json.dumps(asdict(snapshot), indent=2, default=str)
 
 
+# Move kinds the planner is no longer allowed to propose. The dispatcher
+# in act.py still handles them (for old pending_moves rows from before the
+# deprecation), but new proposals are dropped here so DeepSeek can't keep
+# spawning Claude Code sessions on a cancelled subscription.
+_DEPRECATED_PROPOSAL_KINDS: frozenset[str] = frozenset({"spawn_session"})
+
+
 def _coerce_move(raw: dict) -> NextMove | None:
     intent = (raw.get("intent") or "").strip()
     if not intent:
         return None  # hard requirement: drop moves without intent
     kind = raw.get("kind")
     if kind not in _VALID_KINDS:
+        return None
+    if kind in _DEPRECATED_PROPOSAL_KINDS:
+        _log(
+            "move.dropped",
+            reason="deprecated_proposal_kind",
+            kind=kind,
+            title=raw.get("title", ""),
+        )
         return None
     try:
         priority = int(raw.get("priority", 5))
