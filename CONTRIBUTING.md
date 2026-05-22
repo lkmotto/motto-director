@@ -50,3 +50,15 @@ workflow:
 ```bash
 bash .github/workflows/auto-merge-guard-test.sh
 ```
+
+## Pre-commit hooks
+
+This repo uses [pre-commit](https://pre-commit.com) to run linting,
+formatting, and security checks on every commit. To set it up locally:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+The hooks are defined in `.pre-commit-config.yaml`.
