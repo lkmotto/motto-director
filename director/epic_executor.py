@@ -8,15 +8,11 @@ flow through the standard fanout merge -> queue -> approval pipeline.
 
 The executor is intentionally dumb. It does NOT re-plan, re-rank, or
 synthesize new prompts — it just hands the next planned step to the human
-gate. The planner lens (orchestrator.LENS_PROMPTS['planner']) is what
-proposes epics in the first place.
-
-Why split planner from executor:
-  * Planner is heavy + LLM-driven, runs heavy-only and proposes 3-step
-    plans across many cycles.
-  * Executor is cheap + deterministic, runs every cycle.
-  * Each step still goes through the human approval gate, so a bad plan
-    can be killed move-by-move without abandoning the whole epic.
+gate. Day-0 bootstrap (May 2026) deleted the in-director planner lens;
+new epics are created by Luke or agents via the MCP `create_epic` tool
+and executed by Factory droids dispatched via `dispatch_droid_for_epic`.
+This executor remains for any pre-Day-0 epics still flowing through the
+pending_moves approval queue.
 
 Caps:
   * DIRECTOR_MAX_ACTIVE_EPICS (default 3) bounds concurrent epics.

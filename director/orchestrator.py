@@ -1,35 +1,27 @@
-"""Parallel subagent orchestrator.
+"""Parallel subagent orchestrator (nudger/watchdog mode).
 
-The default `ideate()` calls one DeepSeek with a single generalist system
-prompt. That works, but it bottlenecks on a single LLM's attention across
-five very different concerns (CI, PR aging, issue triage, cross-repo
-coupling, cost). It also can't fan out to look at problems in parallel —
-which is the whole point the user asked for.
+Day-0 bootstrap (May 2026) collapsed motto-director from a planner that
+proposed epics down to a nudger/watchdog that runs janitorial maintenance
+lenses only. Epics now come exclusively from Luke or agents calling
+`create_epic` against the MCP server, and are executed by Factory droids
+dispatched via `dispatch_droid_for_epic`. The director no longer plans,
+bundles, or seeds epics — those code paths (architect, opportunity_scout,
+planner, epic_bundler lenses; `_run_planner`; `_parse_planner_epics`) were
+deleted by Worker G.
 
-This module adds `parallel_ideate(snapshot)`: it runs N specialized
-DeepSeek subagents concurrently via `asyncio.gather`, each with a
-focused lens, then merges + dedupes their proposals into a single
-ranked list of NextMoves.
+`parallel_ideate(snapshot)` runs the remaining maintenance lenses
+concurrently via `asyncio.gather`, each with a focused lens, then
+merges + dedupes their proposals into a single ranked list of NextMoves.
 
 Each subagent gets the same Snapshot but a different system prompt that
 tells it which lens to apply, what to look for, and what to ignore.
 
-Default lenses (8):
-  Maintenance lenses (small, narrow):
+Default lenses (5, maintenance only):
   - ci_doctor:        red CI, flaky tests, broken builds
   - stale_pr_closer:  PRs idle >24h with green CI; propose merge or rebase
   - issue_triager:    cluster open issues; merge dupes / close stale / promote
   - cross_repo:       one repo's change implies follow-up in another
   - cost_watchdog:    Langfuse + NF metrics regressions
-
-  Strategic lenses (big, ambitious):
-  - architect:        propose structural upgrades (new agents, new lenses,
-                      consolidations, simplifications) — uses STRATEGIC_INTENT
-                      to know what we're trying to *build*
-  - opportunity_scout: looks at what's *missing* (capability gaps, unwritten
-                      tests, manual workflows that should be automated)
-  - epic_bundler:     after the other lenses run, take their proposals and
-                      bundle related ones into single compound sessions
 
 Activation: set DIRECTOR_PARALLEL_SUBAGENTS=1 on the NF job env. When
 unset (or 0), main.py uses the legacy `ideate()` path.
@@ -46,12 +38,9 @@ import os
 import sys
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
-from typing import Any
 
 import httpx
 
-from director import epic_executor as epic_executor_mod
-from director.epics import Epic, EpicStep, count_open_kpis, insert_epics
 from director.ideate import NextMove, _coerce_move
 from director.kpis import format_for_prompt as format_kpis
 from director.kpis import load_kpis
@@ -60,9 +49,6 @@ from director.strategy import format_for_prompt, load_strategic_intent
 
 DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 DEEPSEEK_DEFAULT_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash")
-# Reasoner has a 32K output cap (vs 8K on chat) — used as auto-promote
-# fallback when the previous planner cycle hit finish_reason='length'.
-PLANNER_HIGH_CAP_MODEL = os.environ.get("PLANNER_HIGH_CAP_MODEL", "deepseek-reasoner")
 DEEPSEEK_TIMEOUT_S = float(os.environ.get("DEEPSEEK_TIMEOUT_S", "120"))
 
 
@@ -86,7 +72,7 @@ def _log(event: str, **fields: object) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Lens definitions
+# Lens definitions (maintenance only — strategic lenses removed Day-0)
 # ---------------------------------------------------------------------------
 
 _BASE_RULES = """Output STRICT JSON: {"moves": [NextMove, ...]} with no prose.
@@ -210,183 +196,6 @@ Ignore: PR queue, CI, issue triage, cross-repo.
     + _BASE_RULES,
 }
 
-LENS_PROMPTS["architect"] = (
-    """You are the fleet architect for the motto stack.
-
-Lens: structural upgrades — the kind of moves that make the system *better*,
-not just unbroken. Read the STRATEGIC INTENT block carefully; every move you
-propose should advance one of the listed priorities or remove an item from
-the "Things to avoid" list.
-
-Look for:
-  - Capability gaps in the fleet (an agent that should exist but doesn't)
-  - Lens gaps in motto-director itself (your own blind spots)
-  - Consolidation opportunities (two repos that should be one, two
-    Doppler projects that should be one)
-  - Patterns of repeated manual work that should be automated
-  - Pieces of the 90-day priorities that have stalled
-  - Self-improvement: motto-director should propose PRs against itself
-    when DIRECTOR_ALLOW_SELF_MOD is enabled
-
-Propose:
-  - compound_pr moves with concrete code_changes for small, surgical
-    self-modifications (new lens, prompt tweak, new policy gate)
-  - spawn_session moves for larger refactors. Be ambitious with scope:
-    a single session that touches 2-3 related files and rebases a stalled
-    PR is BETTER than 3 separate sessions.
-  - file_issue moves to capture an architectural decision Luke needs to
-    make ("should we promote X to its own repo?")
-
-Ignore: day-to-day CI failures, individual stale PRs, duplicate issues.
-Other lenses cover those.
-
-Bias: prefer one big high-leverage move over five small ones. Empty list
-is better than a small move padding the count.
-
-"""
-    + _BASE_RULES
-)
-
-
-LENS_PROMPTS["opportunity_scout"] = (
-    """You are the opportunity scout for the motto stack.
-
-Lens: things that are *missing*, not things that are broken. The director's
-other lenses are janitorial — you find net-new value.
-
-Look for:
-  - Capabilities the strategic intent calls for but no agent owns yet
-  - Tests that don't exist for code paths that already shipped
-  - Observability gaps (an agent with no Langfuse traces, a service with
-    no /health endpoint, a job with no run-status query)
-  - Knowledge artifacts not yet captured (a runbook that should exist,
-    a CLAUDE.md missing for a repo, a postmortem not written)
-  - External integrations Luke uses manually but no agent does
-    (Apollo enrichment, Lavender scoring, Plaid sync, etc.)
-  - Wins blocked by a single small missing piece
-
-Propose:
-  - file_issue moves naming the gap explicitly with rationale citing why
-    it matters now
-  - spawn_session moves to fill the gap (Claude Code prompt that creates
-    the missing file/test/runbook)
-  - compound_pr moves with concrete content for small additive files
-
-Ignore: existing issues being worked on, PRs in flight, CI noise.
-
-Bias: name what's missing in plain language. Don't propose if you can't
-cite a concrete reason it matters this cycle.
-
-"""
-    + _BASE_RULES
-)
-
-
-LENS_PROMPTS["planner"] = """You are the multi-cycle planner for the motto stack.
-
-This lens runs ONLY at deep_read=heavy. Your job is to look at the KPI
-gaps in the user message under `=== NORTH-STAR KPIs ===` and propose 1-3
-epics — multi-step projects that will move a specific KPI over multiple
-cycles. You are the antidote to single-redundancy janitorial work; think
-in 3-8 step plans, not one-off moves.
-
-Look for:
-  - KPIs whose current value is far from target (the bigger the gap, the
-    higher priority)
-  - Strategic priorities from STRATEGIC INTENT that no current epic owns
-  - Patterns of repeated manual work (gap that warrants a multi-step
-    automation effort, not just one issue)
-  - Capability gaps that block multiple downstream wins
-
-DO NOT propose:
-  - An epic for a KPI already in the `=== OPEN KPI EPICS ===` list — the
-    planner only proposes one epic per KPI at a time.
-  - Single-step "epics" — those are normal moves; let other lenses handle.
-  - Plans with more than 8 steps; if scope is bigger, split into a phase 1.
-
-Output STRICT JSON shape (NOT a NextMove list — DIFFERENT schema):
-  {
-    "epics": [
-      {
-        "title": "short imperative title",
-        "kpi_ref": "exact KPI name from the KPIs block (case-sensitive)",
-        "rationale": "1-3 sentences citing the KPI gap + strategic intent",
-        "estimated_cycles": 5,
-        "success_criteria": "observable outcome that closes this epic",
-        "steps": [
-          {
-            "order": 1,
-            "title": "short imperative",
-            "kind": "spawn_session" | "file_issue" | "compound_pr" | "merge_pr" | "nudge_pipeline",
-            "repo": "lkmotto/<repo>",
-            "rationale": "why this step now, references concrete signal",
-            "depends_on": []
-          },
-          ...
-        ]
-      }
-    ]
-  }
-
-Hard rules:
-1. Output {} or {"epics": []} if you have nothing high-leverage to propose.
-   Empty is better than mediocre.
-2. Each epic must have 3-8 steps. Single-step epics are not epics.
-3. `kpi_ref` MUST exactly match a KPI title from the KPIs block. A KPI
-   title is the EXACT text after `### KPI: ` (three hashes, single space,
-   no trailing punctuation) on a heading line. Example: if the file says
-   `### KPI: Cold email reply rate`, then write `"kpi_ref": "Cold email
-   reply rate"`. Tier-0 KPIs use the same `### KPI:` heading prefix.
-   Per-repo KPIs are nested under `## Repo: <name>` headings; pick the
-   KPI that lives under the same repo as the steps you're proposing.
-   If you can't tie an idea to one of these exact titles, drop the epic.
-4. depends_on contains step.order values; step 1 has no deps.
-5. Be ambitious with scope and concrete with steps. Each step should
-   describe one observable change in one repo.
-6. NEVER mix product lines in one epic. The Motto Appraisal Service fleet
-   (motto-*, rw-order-monitor, appraisalos-*) and the DownTime product
-   line (downtime-*) are separate businesses with separate KPI files. The
-   KPIs you see in this prompt belong to ONE product line; do not propose
-   steps in repos from a different product line.
-7. Tier-0 fleet-wide KPIs may have steps spanning multiple repos in the
-   SAME product line, but each step still lands in exactly one repo.
-8. OUTPUT BUDGET: max 3 epics, max 5 steps each. Keep `rationale` and step
-   `rationale` to one sentence. The completion is hard-capped at 8192
-   tokens — if your output is truncated mid-JSON, NOTHING is parsed and
-   the whole cycle is wasted. Be precise, not verbose.
-"""
-
-LENS_PROMPTS["epic_bundler"] = (
-    """You are the epic bundler for the motto stack.
-
-This lens runs AFTER the other lenses. You receive their merged proposals
-in the user message under `=== UPSTREAM PROPOSALS ===`. Your job is to spot
-groups of related small moves and bundle them into one ambitious move that
-does the same work in fewer sessions.
-
-Look for:
-  - 2+ moves on the same repo that touch the same area
-  - 2+ moves whose Claude Code prompts could share context
-  - Sequences of dependent moves ("rebase PR #X then merge" → one session)
-  - Janitorial moves on the same repo that could ship as one cleanup PR
-
-Propose:
-  - compound_pr moves bundling 2+ small file_issue tasks into one
-  - spawn_session moves with prompts of the form: "In a single session,
-    do A, then B, then C" — referencing concrete PR/issue numbers
-  - merge_pr moves only when the upstream lens already cleared CI
-
-Return an EMPTY moves list when nothing meaningful can be bundled. The
-goal is fewer-bigger, not more-moves.
-
-When you bundle, the bundled session should explicitly reference the
-upstream move titles in its `intent` field so the human approver knows
-which smaller moves the bundle replaces.
-
-"""
-    + _BASE_RULES
-)
-
 
 DEFAULT_LENSES: tuple[str, ...] = (
     "ci_doctor",
@@ -394,13 +203,7 @@ DEFAULT_LENSES: tuple[str, ...] = (
     "issue_triager",
     "cross_repo",
     "cost_watchdog",
-    "architect",
-    "opportunity_scout",
 )
-# epic_bundler runs after the others (sequential pass) so it sees their
-# moves; it's NOT in DEFAULT_LENSES (which is the parallel-fanout list).
-# planner is a separate sequential pass that runs heavy-only; see
-# `_run_planner` below.
 
 
 def _snapshot_to_prompt(snapshot: Snapshot) -> str:
@@ -413,28 +216,14 @@ def _user_message(
     strategic_intent: str = "",
     kpis: str = "",
     repo_evidence: str = "",
-    upstream_proposals: str = "",
-    open_kpi_epics: str = "",
 ) -> str:
     parts: list[str] = []
     if strategic_intent:
         parts.append(strategic_intent.rstrip() + "\n")
     if kpis:
         parts.append(kpis.rstrip() + "\n")
-    if open_kpi_epics:
-        parts.append(
-            "===== OPEN KPI EPICS (skip proposing these) =====\n"
-            + open_kpi_epics.rstrip()
-            + "\n===== END OPEN KPI EPICS =====\n"
-        )
     if repo_evidence:
         parts.append(repo_evidence.rstrip() + "\n")
-    if upstream_proposals:
-        parts.append(
-            "===== UPSTREAM PROPOSALS (from sibling lenses) =====\n"
-            + upstream_proposals.rstrip()
-            + "\n===== END UPSTREAM PROPOSALS =====\n"
-        )
     parts.append(
         "Snapshot of the motto stack:\n\n```json\n"
         + _snapshot_to_prompt(snapshot)
@@ -586,222 +375,6 @@ def _merge_moves(results: list[SubagentResult], *, max_total: int = 20) -> list[
     return merged_list[:max_total]
 
 
-def _parse_planner_epics(text: str, *, run_id: str) -> list[Epic]:
-    """Coerce the planner's JSON output into a list of validated Epic
-    objects. Drops any epic that fails the basic shape contract.
-    """
-    parsed = _extract_json(text)
-    if not isinstance(parsed, dict):
-        return []
-    raw_list = parsed.get("epics") or []
-    if not isinstance(raw_list, list):
-        return []
-    out: list[Epic] = []
-    for raw in raw_list:
-        if not isinstance(raw, dict):
-            continue
-        title = str(raw.get("title", "")).strip()
-        kpi_ref = str(raw.get("kpi_ref", "")).strip()
-        if not title or not kpi_ref:
-            continue
-        steps_raw = raw.get("steps") or []
-        if not isinstance(steps_raw, list) or not (3 <= len(steps_raw) <= 8):
-            continue
-        steps: list[EpicStep] = []
-        for s in steps_raw:
-            if not isinstance(s, dict):
-                continue
-            try:
-                order = int(s.get("order", 0))
-            except (TypeError, ValueError):
-                order = 0
-            if order < 1:
-                continue
-            depends_raw = s.get("depends_on") or []
-            depends: list[int] = []
-            if isinstance(depends_raw, list):
-                for d in depends_raw:
-                    try:
-                        depends.append(int(d))
-                    except (TypeError, ValueError):
-                        continue
-            steps.append(
-                EpicStep(
-                    order=order,
-                    title=str(s.get("title", "")).strip(),
-                    kind=str(s.get("kind", "spawn_session")).strip() or "spawn_session",
-                    repo=str(s.get("repo", "")).strip(),
-                    rationale=str(s.get("rationale", "")).strip(),
-                    depends_on=depends,
-                )
-            )
-        if not (3 <= len(steps) <= 8):
-            continue
-        try:
-            est = int(raw.get("estimated_cycles", 0))
-        except (TypeError, ValueError):
-            est = 0
-        out.append(
-            Epic(
-                title=title,
-                kpi_ref=kpi_ref,
-                rationale=str(raw.get("rationale", "")).strip(),
-                estimated_cycles=est,
-                success_criteria=str(raw.get("success_criteria", "")).strip(),
-                steps=steps,
-                run_id=run_id,
-            )
-        )
-    return out
-
-
-async def _run_planner(
-    client: httpx.AsyncClient,
-    *,
-    snapshot: Snapshot,
-    strategic_intent: str,
-    kpis_block: str,
-    repo_evidence: str,
-    api_key: str,
-    model: str,
-    run_id: str,
-) -> dict[str, int]:
-    """Run the planner lens (heavy-only). Inserts proposed epics into the
-    epics table; returns counts dict for logging. Caller decides whether to
-    invoke this based on deep_read level.
-    """
-    if "planner" not in LENS_PROMPTS:
-        return {"skipped": 1}
-
-    # Auto-promote: if the previous planner cycle was truncated
-    # (finish_reason='length'), use the high-cap reasoner model for THIS
-    # cycle. We don't sticky-promote — the next cycle goes back to default,
-    # which will only re-promote if it truncates again. Cheap in steady
-    # state, bulletproof when scope balloons.
-    chosen_model = model
-    promoted = False
-    try:
-        from director import fleet as fleet_mod
-
-        if await fleet_mod.last_planner_was_truncated():
-            chosen_model = PLANNER_HIGH_CAP_MODEL
-            promoted = True
-            _log(
-                "orchestrator.planner.auto_promote",
-                from_model=model,
-                to_model=chosen_model,
-            )
-    except Exception as exc:  # noqa: BLE001
-        _log("orchestrator.planner.auto_promote_check_failed", error=str(exc)[:200])
-
-    open_kpis = sorted(count_open_kpis())
-    open_kpis_text = (
-        "\n".join(f"- {k}" for k in open_kpis) if open_kpis else "(none yet — propose freely)"
-    )
-    user_msg = _user_message(
-        snapshot,
-        strategic_intent=strategic_intent,
-        kpis=kpis_block,
-        repo_evidence=repo_evidence,
-        open_kpi_epics=open_kpis_text,
-    )
-    started = datetime.now(UTC)
-    text = ""
-    usage: dict[str, Any] = {}
-    call_error: str | None = None
-    try:
-        resp = await client.post(
-            f"{DEEPSEEK_BASE_URL}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": chosen_model,
-                # DeepSeek chat caps completion at 8192; reasoner caps at
-                # 32768. Planner output JSON contains multi-step plans per
-                # epic and was truncating at 4096 (parsed=0). 8192 fits ~3
-                # epics with 5 steps each on chat; on auto-promoted reasoner
-                # we get headroom for any scope.
-                "max_tokens": 32768 if promoted else 8192,
-                "messages": [
-                    {"role": "system", "content": LENS_PROMPTS["planner"]},
-                    {"role": "user", "content": user_msg},
-                ],
-            },
-            timeout=DEEPSEEK_TIMEOUT_S,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        choice = (data.get("choices") or [{}])[0]
-        text = (choice.get("message") or {}).get("content", "") or ""
-        finish_reason = choice.get("finish_reason") or ""
-        usage = data.get("usage", {}) or {}
-        if finish_reason and finish_reason != "stop":
-            _log(
-                "orchestrator.planner.finish_reason",
-                finish_reason=finish_reason,
-                tokens_out=int(usage.get("completion_tokens", 0) or 0),
-            )
-    except Exception as exc:  # noqa: BLE001
-        call_error = str(exc)[:200]
-        _log("orchestrator.planner.error", error=call_error)
-        finish_reason = ""
-
-    latency = int((datetime.now(UTC) - started).total_seconds() * 1000)
-    candidates = _parse_planner_epics(text, run_id=run_id) if text else []
-    # Skip epics whose KPI already has an open epic.
-    open_set = set(open_kpis)
-    fresh = [e for e in candidates if e.kpi_ref not in open_set]
-    counts = (
-        insert_epics(fresh, run_id=run_id)
-        if fresh
-        else {
-            "inserted": 0,
-            "skipped": 0,
-            "errors": 0,
-        }
-    )
-    counts.update(
-        {
-            "parsed": len(candidates),
-            "filtered_kpi_dup": len(candidates) - len(fresh),
-            "latency_ms": latency,
-            "tokens_in": int(usage.get("prompt_tokens", 0) or 0),
-            "tokens_out": int(usage.get("completion_tokens", 0) or 0),
-        }
-    )
-    if call_error:
-        counts["call_error"] = call_error
-    _log("orchestrator.planner.done", **counts)
-
-    # Persist a planner.cycle event to fleet.events so we can debug the
-    # planner from SQL (NF API doesn't expose run logs).
-    try:
-        from director import fleet as fleet_mod
-
-        await fleet_mod.record_planner_event(
-            run_id=run_id or None,
-            parsed=int(counts.get("parsed", 0)),
-            inserted=int(counts.get("inserted", 0)),
-            skipped=int(counts.get("skipped", 0)),
-            errors=int(counts.get("errors", 0)),
-            filtered_kpi_dup=int(counts.get("filtered_kpi_dup", 0)),
-            latency_ms=int(counts.get("latency_ms", 0)),
-            tokens_in=int(counts.get("tokens_in", 0)),
-            tokens_out=int(counts.get("tokens_out", 0)),
-            output_preview=(call_error or text or ""),
-            open_kpi_count=len(open_kpis),
-            finish_reason=finish_reason,
-            model_used=chosen_model,
-            auto_promoted=promoted,
-        )
-    except Exception as exc:  # noqa: BLE001
-        _log("orchestrator.planner.event_failed", error=str(exc)[:200])
-
-    return counts
-
-
 async def parallel_ideate(
     snapshot: Snapshot,
     *,
@@ -814,7 +387,11 @@ async def parallel_ideate(
     Returns an empty list on configuration error (no API key) or if every
     subagent failed. Caller should fall back to the legacy `ideate()` in
     that case.
+
+    `run_id` is retained for caller compatibility but no longer used (the
+    planner pass that consumed it was deleted Day-0).
     """
+    del run_id  # kept for caller compatibility
     api_key = os.environ.get("DEEPSEEK_API_KEY")
     if not api_key:
         _log("orchestrator.skipped", reason="DEEPSEEK_API_KEY missing")
@@ -825,11 +402,9 @@ async def parallel_ideate(
     # Load strategic intent + KPIs + deep-read evidence once, share across lenses.
     strategic_intent = format_for_prompt(load_strategic_intent())
     kpis_block = format_kpis(load_kpis())
-    deep_read_level = ""
     try:
         from director import deep_read
 
-        deep_read_level = os.environ.get("DIRECTOR_DEEP_READ_LEVEL", "").strip().lower()
         repo_evidence = deep_read.gather_evidence(snapshot) if deep_read.is_enabled() else ""
     except Exception as exc:  # noqa: BLE001
         _log("deep_read.failed", error=str(exc)[:300])
@@ -868,35 +443,6 @@ async def parallel_ideate(
 
         results = await asyncio.gather(*(_run(lens) for lens in lenses))
 
-        # Epic bundler post-pass: see if upstream moves can be bundled.
-        merged_upstream = _merge_moves(results)
-        bundler_moves: list[NextMove] = []
-        if merged_upstream and "epic_bundler" in LENS_PROMPTS:
-            upstream_text = json.dumps([asdict(m) for m in merged_upstream], indent=2, default=str)
-            bundler_user_msg = _user_message(
-                snapshot,
-                strategic_intent=strategic_intent,
-                repo_evidence=repo_evidence,
-                upstream_proposals=upstream_text,
-            )
-            bundler_result = await _call_subagent(
-                client,
-                lens="epic_bundler",
-                system=LENS_PROMPTS["epic_bundler"],
-                user_msg=bundler_user_msg,
-                api_key=api_key,
-                model=model,
-            )
-            results.append(bundler_result)
-            bundler_moves = bundler_result.moves
-            _log(
-                "orchestrator.bundler.done",
-                bundled_moves=len(bundler_moves),
-                tokens_in=bundler_result.tokens_in,
-                tokens_out=bundler_result.tokens_out,
-                latency_ms=bundler_result.latency_ms,
-            )
-
     total_in = sum(r.tokens_in for r in results)
     total_out = sum(r.tokens_out for r in results)
     failures = [r for r in results if r.error]
@@ -911,52 +457,7 @@ async def parallel_ideate(
         strategic_intent_bytes=len(strategic_intent.encode("utf-8")) if strategic_intent else 0,
     )
 
-    merged = _merge_moves(results)
-
-    # Planner pass (heavy-only): propose new multi-cycle epics into the
-    # epics table. Doesn't return moves itself; epic_executor handles that
-    # on this and future cycles.
-    if deep_read_level == "heavy":
-        try:
-            async with httpx.AsyncClient() as planner_client:
-                await _run_planner(
-                    planner_client,
-                    snapshot=snapshot,
-                    strategic_intent=strategic_intent,
-                    kpis_block=kpis_block,
-                    repo_evidence=repo_evidence,
-                    api_key=api_key,
-                    model=model,
-                    run_id=run_id,
-                )
-        except Exception as exc:  # noqa: BLE001
-            _log("orchestrator.planner.exception", error=str(exc)[:300])
-
-    # Epic executor (every cycle): pull next step from each active epic
-    # and append to the merged move list. Goes through the same approval
-    # gate; dedupe index protects against double-queueing.
-    try:
-        epic_moves = epic_executor_mod.queue_next_steps()
-    except Exception as exc:  # noqa: BLE001
-        _log("orchestrator.epic_executor.exception", error=str(exc)[:300])
-        epic_moves = []
-    if epic_moves:
-        # Use the same merge rules so duplicates with lens output collapse.
-        synth_result = SubagentResult(
-            lens="epic_executor",
-            moves=epic_moves,
-            tokens_in=0,
-            tokens_out=0,
-            latency_ms=0,
-        )
-        merged = _merge_moves(results + [synth_result])
-        _log(
-            "orchestrator.epic_executor.appended",
-            epic_moves=len(epic_moves),
-            merged_total=len(merged),
-        )
-
-    return merged
+    return _merge_moves(results)
 
 
 def is_enabled() -> bool:
