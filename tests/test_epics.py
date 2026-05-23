@@ -106,41 +106,7 @@ def test_executor_caps_active_epics(monkeypatch):
     assert len(moves) == 2  # capped
 
 
-def test_planner_parser_validates_shape(monkeypatch):
-    """orchestrator._parse_planner_epics rejects malformed planner output."""
-    from director import orchestrator
-
-    good = (
-        '{"epics":[{"title":"t","kpi_ref":"AMC panel registrations",'
-        '"rationale":"r","estimated_cycles":3,"success_criteria":"s",'
-        '"steps":['
-        '{"order":1,"title":"a","kind":"file_issue",'
-        '"repo":"lkmotto/x","rationale":"r"},'
-        '{"order":2,"title":"b","kind":"spawn_session",'
-        '"repo":"lkmotto/x","rationale":"r","depends_on":[1]},'
-        '{"order":3,"title":"c","kind":"spawn_session",'
-        '"repo":"lkmotto/x","rationale":"r","depends_on":[2]}'
-        "]}]}"
-    )
-    epics = orchestrator._parse_planner_epics(good, run_id="r1")
-    assert len(epics) == 1
-    assert len(epics[0].steps) == 3
-    assert epics[0].steps[1].depends_on == [1]
-
-
-def test_planner_parser_drops_too_few_steps():
-    from director import orchestrator
-
-    bad = (
-        '{"epics":[{"title":"t","kpi_ref":"k","steps":['
-        '{"order":1,"title":"only","kind":"file_issue","repo":"lkmotto/x"}]}]}'
-    )
-    assert orchestrator._parse_planner_epics(bad, run_id="r1") == []
-
-
-def test_planner_parser_handles_empty():
-    from director import orchestrator
-
-    assert orchestrator._parse_planner_epics("", run_id="r1") == []
-    assert orchestrator._parse_planner_epics("not json", run_id="r1") == []
-    assert orchestrator._parse_planner_epics('{"epics":[]}', run_id="r1") == []
+# Note: tests for orchestrator._parse_planner_epics were removed when the
+# planner lens was deleted from director/orchestrator.py (Day-0 bootstrap,
+# Worker G). The director no longer plans — epics come from `create_epic`
+# against the MCP server.
