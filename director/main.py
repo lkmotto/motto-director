@@ -17,7 +17,8 @@ from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime
 
-import sentry_init  # noqa: E402,F401
+from motto_common.sentry_init import init_sentry  # was: import sentry_init
+init_sentry(agent_name="motto-director")
 from director import critic, fleet, orchestrator, policy, queue
 from director.act import act, fleet_run_id_var
 from director.concurrency import adaptive_session_limit
