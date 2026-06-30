@@ -67,5 +67,17 @@ addopts = "-q"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
+[tool.bandit]
+exclude_dirs = [".venv", ".git", ".pytest_cache", ".ruff_cache", ".mypy_cache", "tests"]
+
+[tool.semantic_release]
+version_toml = ["pyproject.toml:project.version"]
+commit_parser = "conventional"
+tag_format = "v{version}"
+[tool.semantic_release.changelog.default_templates]
+changelog_file = "CHANGELOG.md"
+[tool.semantic_release.branches.main]
+match = "(main|master)"
+
 [tool.uv.sources]
 motto-common = { path = "../motto-common" }

@@ -1,0 +1,139 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-motto-director
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: uv pip install --system ".[dev]"
+
+      - name: Run bandit security scan
+        run: uvx bandit -c pyproject.toml -r director/
+
+      - name: Run tests
+        run: pytest
+
+      - name: Semantic Release - determine version and update CHANGELOG
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+
+          # Generate changelog section from git log
+          if [ -n "$PREV_TAG" ]; then
+            LOG_RANGE="${PREV_TAG}..HEAD"
+          else
+            LOG_RANGE="HEAD"
+          fi
+
+          {
+            echo "## [${TAG_NAME#v}] - $(date +%Y-%m-%d)"
+            echo ""
+            git log "$LOG_RANGE" --pretty=format:"- %s (%h)" --no-merges
+            echo ""
+            echo ""
+          } > /tmp/changelog_section.md
+
+          # Prepend new version to CHANGELOG.md
+          if [ -f CHANGELOG.md ]; then
+            cat /tmp/changelog_section.md CHANGELOG.md > /tmp/updated_changelog.md
+            mv /tmp/updated_changelog.md CHANGELOG.md
+          else
+            {
+              echo "# Changelog"
+              echo ""
+              echo "All notable changes to motto-director will be documented in this file."
+              echo ""
+              cat /tmp/changelog_section.md
+            } > CHANGELOG.md
+          fi
+
+          # Run semantic-release for version management
+          uvx --from "python-semantic-release" semantic-release version --no-vcs-release --skip-build || true
+
+          # Commit and push updated CHANGELOG.md
+          DEFAULT_BRANCH=$(gh api "repos/${GITHUB_REPOSITORY}" --jq .default_branch)
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md pyproject.toml
+          git commit -m "chore(release): update CHANGELOG.md for ${TAG_NAME}" || echo "No changes to commit"
+          git push origin "HEAD:${DEFAULT_BRANCH}"
+
+      - name: Trigger Northflank deploy
+        env:
+          NORTHFLANK_API_KEY: ${{ secrets.NORTHFLANK_API_KEY || secrets.NORTHFLANK_API }}
+          PROJECT_ID: motto-agents
+          JOB_ID: motto-director
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "$NORTHFLANK_API_KEY" ]; then
+            echo "::error::NORTHFLANK_API_KEY (or NORTHFLANK_API) not set on this repo"
+            exit 1
+          fi
+          echo "Triggering NF build for $PROJECT_ID/$JOB_ID @ $COMMIT_SHA"
+
+          resp=$(curl -fsS -X POST \
+            -H "Authorization: Bearer $NORTHFLANK_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"sha\":\"$COMMIT_SHA\"}" \
+            "https://api.northflank.com/v1/projects/$PROJECT_ID/jobs/$JOB_ID/build")
+
+          BUILD_ID=$(echo "$resp" | jq -r '.data.id')
+          echo "Build queued: $BUILD_ID"
+          echo "$resp" | jq '.data | {id, branch, status, sha, createdAt}'
+
+          # Poll until build concludes (capped at 12 minutes)
+          for i in $(seq 1 72); do
+            sleep 10
+            status=$(curl -fsS -H "Authorization: Bearer $NORTHFLANK_API_KEY" \
+              "https://api.northflank.com/v1/projects/$PROJECT_ID/jobs/$JOB_ID/build/$BUILD_ID" \
+              | jq -r '.data.status')
+            echo "  poll $i: status=$status"
+            if [ "$status" = "SUCCESS" ]; then
+              break
+            fi
+            if [ "$status" = "FAILURE" ] || [ "$status" = "CRASHED" ] || [ "$status" = "ABORTED" ] || [ "$status" = "SUBMISSION_FAILURE" ]; then
+              echo "::error::Build $BUILD_ID concluded with status=$status"
+              exit 1
+            fi
+          done
+
+          # Deploy the built image
+          curl -fsS -X POST \
+            -H "Authorization: Bearer $NORTHFLANK_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"internal\":{\"buildId\":\"$BUILD_ID\"}}" \
+            "https://api.northflank.com/v1/projects/$PROJECT_ID/jobs/$JOB_ID/deployment" >/dev/null
+          echo "Deploy issued for build $BUILD_ID."
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
